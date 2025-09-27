@@ -1,1 +1,374 @@
-goon
+-- Main Script - Plant & House Builder Pro with Fluent UI
+-- Replace "YOUR_GITHUB_USERNAME" and "YOUR_REPO_NAME" with your actual GitHub details
+
+-- Load Fluent UI
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+-- Load the module from GitHub (REPLACE WITH YOUR GITHUB LINK)
+local PlantHouseBuilder = loadstring(game:HttpGet("https://raw.githubusercontent.com/checkurasshole/Script/refs/heads/main/9999"))()
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- Create the Fluent window
+local Window = Fluent:CreateWindow({
+    Title = "Plant & House Builder Pro",
+    SubTitle = "Fast Build - Mob Defense",
+    TabWidth = 120,
+    Size = UDim2.fromOffset(420, 380),
+    Acrylic = true,
+    Theme = "Darker",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local MainTab = Window:AddTab({ Title = "Builder", Icon = "hammer" })
+
+-- Resource tracking at the top
+local resourceLabel = MainTab:AddParagraph({
+    Title = "Available Items",
+    Content = "Loading..."
+})
+
+local requiredLabel = MainTab:AddParagraph({
+    Title = "Required Items", 
+    Content = "Select something to build..."
+})
+
+MainTab:AddButton({
+    Title = "Refresh Count",
+    Callback = function()
+        updateResourceDisplay()
+        Fluent:Notify({
+            Title = "Resources Updated",
+            Duration = 2
+        })
+    end
+})
+
+local function updateResourceDisplay()
+    local available = PlantHouseBuilder.countAvailableItems(PlantHouseBuilder.config.itemFilter)
+    local currentTime = os.date("%H:%M:%S")
+    
+    resourceLabel:SetDesc("You have " .. available .. " " .. PlantHouseBuilder.config.itemFilter .. " items available\nLast checked: " .. currentTime)
+    
+    local totalRequired = 0
+    local breakdown = ""
+    
+    if PlantHouseBuilder.config.plantShape ~= "none" and PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape] then
+        local plantPoints = PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape](PlantHouseBuilder.config.size, PlantHouseBuilder.config.density)
+        totalRequired = totalRequired + #plantPoints
+        breakdown = breakdown .. "Plants: " .. #plantPoints .. "\n"
+    end
+    
+    if PlantHouseBuilder.config.houseType ~= "none" and PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType] then
+        local housePoints = PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType](PlantHouseBuilder.config.size)
+        totalRequired = totalRequired + #housePoints
+        breakdown = breakdown .. "House blocks: " .. #housePoints .. "\n"
+    end
+    
+    if totalRequired > 0 then
+        local status = available >= totalRequired and "ENOUGH ITEMS" or "NEED MORE ITEMS"
+        local missing = math.max(0, totalRequired - available)
+        
+        requiredLabel:SetDesc(breakdown .. "Total needed: " .. totalRequired .. "\n" .. status .. "\n" .. 
+                             (missing > 0 and "Missing: " .. missing .. " items" or "Ready to build!"))
+    else
+        requiredLabel:SetDesc("Select a plant shape or house type to see requirements")
+    end
+end
+
+-- Start resource tracking
+spawn(function()
+    while PlantHouseBuilder.isActive do
+        updateResourceDisplay()
+        wait(10)
+    end
+end)
+
+MainTab:AddSection("=======")
+
+-- Plant Shape Dropdown
+MainTab:AddDropdown("PlantShapeDropdown", {
+    Title = "Plant Shape",
+    Values = {"none", "circle", "square", "star"},
+    Default = PlantHouseBuilder.config.plantShape,
+    Callback = function(value)
+        PlantHouseBuilder.config.plantShape = value
+        PlantHouseBuilder.updatePreview()
+        updateResourceDisplay()
+    end
+})
+
+-- House Type Dropdown
+MainTab:AddDropdown("HouseDropdown", {
+    Title = "House Type", 
+    Values = {"none", "small_house", "large_house", "castle", "fortress"},
+    Default = PlantHouseBuilder.config.houseType,
+    Callback = function(value)
+        PlantHouseBuilder.config.houseType = value
+        PlantHouseBuilder.updatePreview()
+        updateResourceDisplay()
+    end
+})
+
+MainTab:AddSection("=======")
+
+-- Size Slider
+MainTab:AddSlider("SizeSlider", {
+    Title = "Size",
+    Default = PlantHouseBuilder.config.size,
+    Min = 20,
+    Max = 150,
+    Rounding = 0,
+    Callback = function(value)
+        PlantHouseBuilder.config.size = value
+        PlantHouseBuilder.updatePreview()
+        updateResourceDisplay()
+    end
+})
+
+-- Density Slider
+MainTab:AddSlider("DensitySlider", {
+    Title = "Plant Count",
+    Default = PlantHouseBuilder.config.density,
+    Min = 5,
+    Max = 80,
+    Rounding = 0,
+    Callback = function(value)
+        PlantHouseBuilder.config.density = value
+        PlantHouseBuilder.updatePreview()
+        updateResourceDisplay()
+    end
+})
+
+MainTab:AddSection("=======")
+
+-- Position Sliders
+MainTab:AddSlider("CenterXSlider", {
+    Title = "X Position",
+    Default = PlantHouseBuilder.config.centerX,
+    Min = -300,
+    Max = 300,
+    Rounding = 0,
+    Callback = function(value)
+        PlantHouseBuilder.config.centerX = value
+        PlantHouseBuilder.updatePreview()
+    end
+})
+
+MainTab:AddSlider("CenterZSlider", {
+    Title = "Z Position", 
+    Default = PlantHouseBuilder.config.centerZ,
+    Min = -300,
+    Max = 300,
+    Rounding = 0,
+    Callback = function(value)
+        PlantHouseBuilder.config.centerZ = value
+        PlantHouseBuilder.updatePreview()
+    end
+})
+
+MainTab:AddSlider("CenterYSlider", {
+    Title = "Y Position (Height)",
+    Default = PlantHouseBuilder.config.centerY,
+    Min = -50,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(value)
+        PlantHouseBuilder.config.centerY = value
+        PlantHouseBuilder.updatePreview()
+    end
+})
+
+-- Tilt Slider
+MainTab:AddSlider("TiltSlider", {
+    Title = "Tilt",
+    Default = PlantHouseBuilder.config.tilt,
+    Min = -90,
+    Max = 90,
+    Rounding = 0,
+    Callback = function(value)
+        PlantHouseBuilder.config.tilt = value
+        PlantHouseBuilder.updatePreview()
+    end
+})
+
+-- Use Player Position Button
+MainTab:AddButton({
+    Title = "Use Player Position",
+    Callback = function()
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local pos = player.Character.HumanoidRootPart.Position
+            PlantHouseBuilder.config.centerX = math.floor(pos.X)
+            PlantHouseBuilder.config.centerZ = math.floor(pos.Z)
+            PlantHouseBuilder.updatePreview()
+            Fluent:Notify({
+                Title = "Position Updated",
+                Content = "Set to player position",
+                Duration = 2
+            })
+        end
+    end
+})
+
+MainTab:AddSection("=======")
+
+-- Item Filter Input
+MainTab:AddInput("ItemInput", {
+    Title = "Item Filter",
+    Default = PlantHouseBuilder.config.itemFilter,
+    Placeholder = "sap",
+    Callback = function(value)
+        PlantHouseBuilder.config.itemFilter = value
+        updateResourceDisplay()
+    end
+})
+
+-- Build Speed Slider
+MainTab:AddSlider("SpeedSlider", {
+    Title = "Build Speed (Fast)",
+    Default = PlantHouseBuilder.config.buildSpeed,
+    Min = 5,
+    Max = 50,
+    Rounding = 1,
+    Callback = function(value)
+        PlantHouseBuilder.config.buildSpeed = value
+    end
+})
+
+-- Preview Toggle
+MainTab:AddToggle("PreviewToggle", {
+    Title = "Show Preview",
+    Default = PlantHouseBuilder.config.previewEnabled,
+    Callback = function(value)
+        PlantHouseBuilder.config.previewEnabled = value
+        PlantHouseBuilder.updatePreview()
+    end
+})
+
+-- Sky Mode Toggle
+MainTab:AddToggle("SkyModeToggle", {
+    Title = "Sky Mode",
+    Default = PlantHouseBuilder.config.skyMode,
+    Callback = function(value)
+        PlantHouseBuilder.config.skyMode = value
+        PlantHouseBuilder.updatePreview()
+    end
+})
+
+-- Max Zoom Slider
+MainTab:AddSlider("MaxZoomSlider", {
+    Title = "Max Zoom Distance",
+    Default = PlantHouseBuilder.config.maxZoom,
+    Min = 50,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(value)
+        PlantHouseBuilder.config.maxZoom = value
+        player.CameraMaxZoomDistance = value
+    end
+})
+
+MainTab:AddSection("=======")
+
+-- Start Building Button
+MainTab:AddButton({
+    Title = "START BUILDING",
+    Callback = function()
+        if PlantHouseBuilder.config.isBuilding then
+            Fluent:Notify({
+                Title = "Already Building",
+                Content = "Please wait for current build to finish",
+                Duration = 3
+            })
+            return
+        end
+        
+        local allPoints = {}
+        
+        -- Add plant points
+        if PlantHouseBuilder.config.plantShape ~= "none" and PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape] then
+            local plantPoints = PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape](PlantHouseBuilder.config.size, PlantHouseBuilder.config.density)
+            for _, point in pairs(plantPoints) do
+                table.insert(allPoints, point)
+            end
+        end
+        
+        -- Add house points
+        if PlantHouseBuilder.config.houseType ~= "none" and PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType] then
+            local housePoints = PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType](PlantHouseBuilder.config.size)
+            for _, point in pairs(housePoints) do
+                table.insert(allPoints, point)
+            end
+        end
+        
+        if #allPoints > 0 then
+            local available = PlantHouseBuilder.countAvailableItems(PlantHouseBuilder.config.itemFilter)
+            if available < #allPoints then
+                Fluent:Notify({
+                    Title = "Not Enough Items!",
+                    Content = "Need " .. (#allPoints - available) .. " more items",
+                    Duration = 5
+                })
+                return
+            end
+            
+            PlantHouseBuilder.buildAtPositions(allPoints)
+            Fluent:Notify({
+                Title = "Building Started!",
+                Content = "Building " .. #allPoints .. " blocks",
+                Duration = 3
+            })
+        else
+            Fluent:Notify({
+                Title = "Nothing Selected",
+                Content = "Please select a plant shape or house type",
+                Duration = 3
+            })
+        end
+    end
+})
+
+-- Stop Building Button
+MainTab:AddButton({
+    Title = "STOP BUILDING",
+    Callback = function()
+        PlantHouseBuilder.config.isBuilding = false
+        PlantHouseBuilder.config.pendingPositions = {}
+        Fluent:Notify({
+            Title = "Building Stopped",
+            Content = "All pending builds cancelled",
+            Duration = 2
+        })
+    end
+})
+
+-- Clear Preview Button
+MainTab:AddButton({
+    Title = "Clear Preview",
+    Callback = function()
+        PlantHouseBuilder.previewFolder:ClearAllChildren()
+        Fluent:Notify({
+            Title = "Preview Cleared",
+            Duration = 2
+        })
+    end
+})
+
+-- Cleanup on player leaving
+table.insert(PlantHouseBuilder.connections, game.Players.PlayerRemoving:Connect(function(plr)
+    if plr == player then 
+        PlantHouseBuilder.cleanup() 
+    end
+end))
+
+-- Initial setup
+updateResourceDisplay()
+PlantHouseBuilder.updatePreview()
+
+-- Success notification
+Fluent:Notify({
+    Title = "Builder Loaded!",
+    Content = "Plant & House Builder Pro is ready to use",
+    Duration = 3
+})
