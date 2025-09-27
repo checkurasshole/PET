@@ -1,8 +1,8 @@
--- Main Script - Plant & House Builder Pro with Fluent UI
+-- Main Script - Plant & House Builder Pro with Correct WindUI Implementation
 -- Replace "YOUR_GITHUB_USERNAME" and "YOUR_REPO_NAME" with your actual GitHub details
 
--- Load Fluent UI
-local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+-- Load WindUI (correct URL from documentation)
+local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
 
 -- Load the module from GitHub (REPLACE WITH YOUR GITHUB LINK)
 local PlantHouseBuilder = loadstring(game:HttpGet("https://raw.githubusercontent.com/checkurasshole/Script/refs/heads/main/9999"))()
@@ -10,46 +10,41 @@ local PlantHouseBuilder = loadstring(game:HttpGet("https://raw.githubusercontent
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
--- Create the Fluent window
-local Window = Fluent:CreateWindow({
+-- Set WindUI theme
+WindUI:SetTheme("Dark")
+
+-- Create WindUI Window (proper syntax from examples)
+local Window = WindUI:CreateWindow({
     Title = "Plant & House Builder Pro",
-    SubTitle = "Fast Build - Mob Defense",
-    TabWidth = 120,
+    Icon = "hammer",
+    Author = "Fast Build - Mob Defense",
+    Folder = "PlantHouseBuilderConfig",
     Size = UDim2.fromOffset(420, 380),
-    Acrylic = true,
-    Theme = "Darker",
-    MinimizeKey = Enum.KeyCode.LeftControl
+    Theme = "Dark",
+    Transparent = true,
+    SideBarWidth = 120,
+    HideSearchBar = false
 })
 
-local MainTab = Window:AddTab({ Title = "Builder", Icon = "hammer" })
-
--- Resource tracking at the top
-local resourceLabel = MainTab:AddParagraph({
-    Title = "Available Items",
-    Content = "Loading..."
+-- Add version tag
+Window:Tag({
+    Title = "v2.0",
+    Color = Color3.fromHex("#30ff6a"),
+    Radius = 5
 })
 
-local requiredLabel = MainTab:AddParagraph({
-    Title = "Required Items", 
-    Content = "Select something to build..."
+-- Create single tab
+local MainTab = Window:Tab({
+    Title = "Builder",
+    Icon = "hammer"
 })
 
-MainTab:AddButton({
-    Title = "Refresh Count",
-    Callback = function()
-        updateResourceDisplay()
-        Fluent:Notify({
-            Title = "Resources Updated",
-            Duration = 2
-        })
-    end
-})
+-- Resource tracking variables
+local resourceButton, requiredButton
 
 local function updateResourceDisplay()
     local available = PlantHouseBuilder.countAvailableItems(PlantHouseBuilder.config.itemFilter)
     local currentTime = os.date("%H:%M:%S")
-    
-    resourceLabel:SetDesc("You have " .. available .. " " .. PlantHouseBuilder.config.itemFilter .. " items available\nLast checked: " .. currentTime)
     
     local totalRequired = 0
     local breakdown = ""
@@ -66,16 +61,62 @@ local function updateResourceDisplay()
         breakdown = breakdown .. "House blocks: " .. #housePoints .. "\n"
     end
     
-    if totalRequired > 0 then
-        local status = available >= totalRequired and "ENOUGH ITEMS" or "NEED MORE ITEMS"
-        local missing = math.max(0, totalRequired - available)
-        
-        requiredLabel:SetDesc(breakdown .. "Total needed: " .. totalRequired .. "\n" .. status .. "\n" .. 
-                             (missing > 0 and "Missing: " .. missing .. " items" or "Ready to build!"))
-    else
-        requiredLabel:SetDesc("Select a plant shape or house type to see requirements")
+    if resourceButton then
+        resourceButton:SetTitle("You have " .. available .. " " .. PlantHouseBuilder.config.itemFilter .. " items available")
+        resourceButton:SetDesc("Last checked: " .. currentTime)
+    end
+    
+    if requiredButton then
+        if totalRequired > 0 then
+            local status = available >= totalRequired and "ENOUGH ITEMS" or "NEED MORE ITEMS"
+            local missing = math.max(0, totalRequired - available)
+            
+            requiredButton:SetTitle(breakdown .. "Total needed: " .. totalRequired)
+            requiredButton:SetDesc(status .. (missing > 0 and " • Missing: " .. missing .. " items" or " • Ready to build!"))
+        else
+            requiredButton:SetTitle("Required Items")
+            requiredButton:SetDesc("Select a plant shape or house type to see requirements")
+        end
     end
 end
+
+-- Resource display buttons
+resourceButton = MainTab:Button({
+    Title = "Available Items",
+    Desc = "Loading...",
+    Icon = "package",
+    Callback = function()
+        updateResourceDisplay()
+        WindUI:Notify({
+            Title = "Resources Updated",
+            Content = "Item counts have been refreshed",
+            Icon = "refresh-cw",
+            Duration = 2
+        })
+    end
+})
+
+requiredButton = MainTab:Button({
+    Title = "Required Items", 
+    Desc = "Select something to build...",
+    Icon = "info",
+    Callback = function() end
+})
+
+MainTab:Button({
+    Title = "Refresh Count",
+    Desc = "",
+    Icon = "refresh-cw",
+    Callback = function()
+        updateResourceDisplay()
+        WindUI:Notify({
+            Title = "Resources Updated",
+            Content = "",
+            Icon = "refresh-cw",
+            Duration = 2
+        })
+    end
+})
 
 -- Start resource tracking
 spawn(function()
@@ -85,13 +126,14 @@ spawn(function()
     end
 end)
 
-MainTab:AddSection("=======")
+MainTab:Space()
 
 -- Plant Shape Dropdown
-MainTab:AddDropdown("PlantShapeDropdown", {
+MainTab:Dropdown({
     Title = "Plant Shape",
+    Desc = "",
     Values = {"none", "circle", "square", "star"},
-    Default = PlantHouseBuilder.config.plantShape,
+    Value = PlantHouseBuilder.config.plantShape,
     Callback = function(value)
         PlantHouseBuilder.config.plantShape = value
         PlantHouseBuilder.updatePreview()
@@ -100,10 +142,11 @@ MainTab:AddDropdown("PlantShapeDropdown", {
 })
 
 -- House Type Dropdown
-MainTab:AddDropdown("HouseDropdown", {
-    Title = "House Type", 
+MainTab:Dropdown({
+    Title = "House Type",
+    Desc = "",
     Values = {"none", "small_house", "large_house", "castle", "fortress"},
-    Default = PlantHouseBuilder.config.houseType,
+    Value = PlantHouseBuilder.config.houseType,
     Callback = function(value)
         PlantHouseBuilder.config.houseType = value
         PlantHouseBuilder.updatePreview()
@@ -111,15 +154,17 @@ MainTab:AddDropdown("HouseDropdown", {
     end
 })
 
-MainTab:AddSection("=======")
+MainTab:Space()
 
 -- Size Slider
-MainTab:AddSlider("SizeSlider", {
+MainTab:Slider({
     Title = "Size",
-    Default = PlantHouseBuilder.config.size,
-    Min = 20,
-    Max = 150,
-    Rounding = 0,
+    Desc = "",
+    Value = {
+        Min = 20,
+        Max = 150,
+        Default = PlantHouseBuilder.config.size
+    },
     Callback = function(value)
         PlantHouseBuilder.config.size = value
         PlantHouseBuilder.updatePreview()
@@ -127,13 +172,15 @@ MainTab:AddSlider("SizeSlider", {
     end
 })
 
--- Density Slider
-MainTab:AddSlider("DensitySlider", {
+-- Plant Count Slider
+MainTab:Slider({
     Title = "Plant Count",
-    Default = PlantHouseBuilder.config.density,
-    Min = 5,
-    Max = 80,
-    Rounding = 0,
+    Desc = "",
+    Value = {
+        Min = 5,
+        Max = 80,
+        Default = PlantHouseBuilder.config.density
+    },
     Callback = function(value)
         PlantHouseBuilder.config.density = value
         PlantHouseBuilder.updatePreview()
@@ -141,39 +188,45 @@ MainTab:AddSlider("DensitySlider", {
     end
 })
 
-MainTab:AddSection("=======")
+MainTab:Space()
 
 -- Position Sliders
-MainTab:AddSlider("CenterXSlider", {
+MainTab:Slider({
     Title = "X Position",
-    Default = PlantHouseBuilder.config.centerX,
-    Min = -300,
-    Max = 300,
-    Rounding = 0,
+    Desc = "",
+    Value = {
+        Min = -300,
+        Max = 300,
+        Default = PlantHouseBuilder.config.centerX
+    },
     Callback = function(value)
         PlantHouseBuilder.config.centerX = value
         PlantHouseBuilder.updatePreview()
     end
 })
 
-MainTab:AddSlider("CenterZSlider", {
-    Title = "Z Position", 
-    Default = PlantHouseBuilder.config.centerZ,
-    Min = -300,
-    Max = 300,
-    Rounding = 0,
+MainTab:Slider({
+    Title = "Z Position",
+    Desc = "",
+    Value = {
+        Min = -300,
+        Max = 300,
+        Default = PlantHouseBuilder.config.centerZ
+    },
     Callback = function(value)
         PlantHouseBuilder.config.centerZ = value
         PlantHouseBuilder.updatePreview()
     end
 })
 
-MainTab:AddSlider("CenterYSlider", {
+MainTab:Slider({
     Title = "Y Position (Height)",
-    Default = PlantHouseBuilder.config.centerY,
-    Min = -50,
-    Max = 100,
-    Rounding = 0,
+    Desc = "",
+    Value = {
+        Min = -50,
+        Max = 100,
+        Default = PlantHouseBuilder.config.centerY
+    },
     Callback = function(value)
         PlantHouseBuilder.config.centerY = value
         PlantHouseBuilder.updatePreview()
@@ -181,12 +234,14 @@ MainTab:AddSlider("CenterYSlider", {
 })
 
 -- Tilt Slider
-MainTab:AddSlider("TiltSlider", {
+MainTab:Slider({
     Title = "Tilt",
-    Default = PlantHouseBuilder.config.tilt,
-    Min = -90,
-    Max = 90,
-    Rounding = 0,
+    Desc = "",
+    Value = {
+        Min = -90,
+        Max = 90,
+        Default = PlantHouseBuilder.config.tilt
+    },
     Callback = function(value)
         PlantHouseBuilder.config.tilt = value
         PlantHouseBuilder.updatePreview()
@@ -194,30 +249,36 @@ MainTab:AddSlider("TiltSlider", {
 })
 
 -- Use Player Position Button
-MainTab:AddButton({
+MainTab:Button({
     Title = "Use Player Position",
+    Desc = "",
+    Icon = "map-pin",
     Callback = function()
         if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
             local pos = player.Character.HumanoidRootPart.Position
             PlantHouseBuilder.config.centerX = math.floor(pos.X)
             PlantHouseBuilder.config.centerZ = math.floor(pos.Z)
             PlantHouseBuilder.updatePreview()
-            Fluent:Notify({
+            
+            WindUI:Notify({
                 Title = "Position Updated",
                 Content = "Set to player position",
+                Icon = "map-pin",
                 Duration = 2
             })
         end
     end
 })
 
-MainTab:AddSection("=======")
+MainTab:Space()
 
 -- Item Filter Input
-MainTab:AddInput("ItemInput", {
+MainTab:Input({
     Title = "Item Filter",
-    Default = PlantHouseBuilder.config.itemFilter,
+    Desc = "",
     Placeholder = "sap",
+    Value = PlantHouseBuilder.config.itemFilter,
+    Icon = "search",
     Callback = function(value)
         PlantHouseBuilder.config.itemFilter = value
         updateResourceDisplay()
@@ -225,60 +286,70 @@ MainTab:AddInput("ItemInput", {
 })
 
 -- Build Speed Slider
-MainTab:AddSlider("SpeedSlider", {
+MainTab:Slider({
     Title = "Build Speed (Fast)",
-    Default = PlantHouseBuilder.config.buildSpeed,
-    Min = 5,
-    Max = 50,
-    Rounding = 1,
+    Desc = "",
+    Value = {
+        Min = 5,
+        Max = 50,
+        Default = PlantHouseBuilder.config.buildSpeed
+    },
     Callback = function(value)
         PlantHouseBuilder.config.buildSpeed = value
     end
 })
 
 -- Preview Toggle
-MainTab:AddToggle("PreviewToggle", {
+MainTab:Toggle({
     Title = "Show Preview",
-    Default = PlantHouseBuilder.config.previewEnabled,
-    Callback = function(value)
-        PlantHouseBuilder.config.previewEnabled = value
+    Desc = "",
+    Value = PlantHouseBuilder.config.previewEnabled,
+    Callback = function(state)
+        PlantHouseBuilder.config.previewEnabled = state
         PlantHouseBuilder.updatePreview()
     end
 })
 
 -- Sky Mode Toggle
-MainTab:AddToggle("SkyModeToggle", {
+MainTab:Toggle({
     Title = "Sky Mode",
-    Default = PlantHouseBuilder.config.skyMode,
-    Callback = function(value)
-        PlantHouseBuilder.config.skyMode = value
+    Desc = "",
+    Value = PlantHouseBuilder.config.skyMode,
+    Callback = function(state)
+        PlantHouseBuilder.config.skyMode = state
         PlantHouseBuilder.updatePreview()
     end
 })
 
 -- Max Zoom Slider
-MainTab:AddSlider("MaxZoomSlider", {
+MainTab:Slider({
     Title = "Max Zoom Distance",
-    Default = PlantHouseBuilder.config.maxZoom,
-    Min = 50,
-    Max = 2000,
-    Rounding = 0,
+    Desc = "",
+    Value = {
+        Min = 50,
+        Max = 2000,
+        Default = PlantHouseBuilder.config.maxZoom
+    },
     Callback = function(value)
         PlantHouseBuilder.config.maxZoom = value
         player.CameraMaxZoomDistance = value
     end
 })
 
-MainTab:AddSection("=======")
+MainTab:Space()
 
 -- Start Building Button
-MainTab:AddButton({
+MainTab:Button({
     Title = "START BUILDING",
+    Desc = "",
+    Icon = "play",
+    Color = Color3.fromHex("#30ff6a"),
     Callback = function()
         if PlantHouseBuilder.config.isBuilding then
-            Fluent:Notify({
+            WindUI:Notify({
                 Title = "Already Building",
                 Content = "Please wait for current build to finish",
+                Icon = "alert-circle",
                 Duration = 3
             })
             return
@@ -305,24 +376,27 @@ MainTab:AddButton({
         if #allPoints > 0 then
             local available = PlantHouseBuilder.countAvailableItems(PlantHouseBuilder.config.itemFilter)
             if available < #allPoints then
-                Fluent:Notify({
+                WindUI:Notify({
                     Title = "Not Enough Items!",
                     Content = "Need " .. (#allPoints - available) .. " more items",
+                    Icon = "x-circle",
                     Duration = 5
                 })
                 return
             end
             
             PlantHouseBuilder.buildAtPositions(allPoints)
-            Fluent:Notify({
+            WindUI:Notify({
                 Title = "Building Started!",
                 Content = "Building " .. #allPoints .. " blocks",
+                Icon = "hammer",
                 Duration = 3
             })
         else
-            Fluent:Notify({
+            WindUI:Notify({
                 Title = "Nothing Selected",
                 Content = "Please select a plant shape or house type",
+                Icon = "alert-triangle",
                 Duration = 3
             })
         end
@@ -330,26 +404,34 @@ MainTab:AddButton({
 })
 
 -- Stop Building Button
-MainTab:AddButton({
+MainTab:Button({
     Title = "STOP BUILDING",
+    Desc = "",
+    Icon = "square",
+    Color = Color3.fromHex("#ff4830"),
     Callback = function()
         PlantHouseBuilder.config.isBuilding = false
         PlantHouseBuilder.config.pendingPositions = {}
-        Fluent:Notify({
+        WindUI:Notify({
             Title = "Building Stopped",
             Content = "All pending builds cancelled",
+            Icon = "square",
             Duration = 2
         })
     end
 })
 
 -- Clear Preview Button
-MainTab:AddButton({
+MainTab:Button({
     Title = "Clear Preview",
+    Desc = "",
+    Icon = "trash-2",
     Callback = function()
         PlantHouseBuilder.previewFolder:ClearAllChildren()
-        Fluent:Notify({
+        WindUI:Notify({
             Title = "Preview Cleared",
+            Content = "",
+            Icon = "trash-2",
             Duration = 2
         })
     end
@@ -367,8 +449,9 @@ updateResourceDisplay()
 PlantHouseBuilder.updatePreview()
 
 -- Success notification
-Fluent:Notify({
+WindUI:Notify({
     Title = "Builder Loaded!",
     Content = "Plant & House Builder Pro is ready to use",
+    Icon = "check-circle",
     Duration = 3
 })
