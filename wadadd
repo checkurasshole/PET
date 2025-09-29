@@ -3,7 +3,7 @@
 
 local LogWallBuilderModule = {}
 
-function LogWallBuilderModule.Init()
+function LogWallBuilderModule.Init(WindUI)
     -- Services & Remotes
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Players = game:GetService("Players")
@@ -254,7 +254,7 @@ function LogWallBuilderModule.Init()
         end
     end
 
-    local function surroundCharacter(structureName, WindUI)
+    local function surroundCharacter(structureName)
         if Config.isBuilding then
             WindUI:Notify({
                 Title = "Already Building",
@@ -349,7 +349,8 @@ function LogWallBuilderModule.Init()
         isActive = isActive,
         setResourceButton = function(btn) resourceButton = btn end,
         setRequiredButton = function(btn) requiredButton = btn end,
-        setIsActive = function(val) isActive = val end
+        setIsActive = function(val) isActive = val end,
+        player = player
     }
 end
 
