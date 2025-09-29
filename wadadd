@@ -36,11 +36,11 @@ function WallBuilderModule.new(WindUI)
         woodPerWall = 10
     }
     
-    -- Initialize preview folder
-    local previewFolder = workspace:FindFirstChild("BuilderPreview")
+    -- Initialize preview folder with unique name
+    local previewFolder = workspace:FindFirstChild("WallBuilderPreviewSystem")
     if previewFolder then previewFolder:Destroy() end
     previewFolder = Instance.new("Folder")
-    previewFolder.Name = "BuilderPreview"
+    previewFolder.Name = "WallBuilderPreviewSystem"
     previewFolder.Parent = workspace
     
     local connections = {}
@@ -102,20 +102,93 @@ function WallBuilderModule.new(WindUI)
         end
     end
     
-    -- Preview Functions
+    -- Preview Functions - NEW DESIGN
     function self.createPreviewPoint(position, color)
-        local part = Instance.new("Part")
-        part.Name = "PreviewPoint"
-        part.Size = Vector3.new(3, 12, 3)
-        part.Position = position
-        part.Material = Enum.Material.Neon
-        part.Color = color
-        part.Anchored = true
-        part.CanCollide = false
-        part.Transparency = 0.2
-        part.Parent = previewFolder
+        -- Create main cylinder marker
+        local cylinder = Instance.new("Part")
+        cylinder.Name = "WallPreviewMarker"
+        cylinder.Size = Vector3.new(2, 14, 2)
+        cylinder.Position = position
+        cylinder.Material = Enum.Material.ForceField
+        cylinder.Color = Color3.fromRGB(100, 200, 255)
+        cylinder.Anchored = true
+        cylinder.CanCollide = false
+        cylinder.Transparency = 0.4
+        cylinder.Parent = previewFolder
         
-        return part
+        -- Add spinning rings
+        local ring1 = Instance.new("Part")
+        ring1.Name = "Ring1"
+        ring1.Size = Vector3.new(6, 0.3, 6)
+        ring1.Shape = Enum.PartType.Cylinder
+        ring1.Position = position + Vector3.new(0, 5, 0)
+        ring1.Material = Enum.Material.Neon
+        ring1.Color = Color3.fromRGB(0, 255, 200)
+        ring1.Anchored = true
+        ring1.CanCollide = false
+        ring1.Transparency = 0.3
+        ring1.Orientation = Vector3.new(0, 0, 90)
+        ring1.Parent = previewFolder
+        
+        local ring2 = Instance.new("Part")
+        ring2.Name = "Ring2"
+        ring2.Size = Vector3.new(4, 0.2, 4)
+        ring2.Shape = Enum.PartType.Cylinder
+        ring2.Position = position + Vector3.new(0, -5, 0)
+        ring2.Material = Enum.Material.Neon
+        ring2.Color = Color3.fromRGB(255, 100, 200)
+        ring2.Anchored = true
+        ring2.CanCollide = false
+        ring2.Transparency = 0.3
+        ring2.Orientation = Vector3.new(0, 0, 90)
+        ring2.Parent = previewFolder
+        
+        -- Add beam to ground
+        local beam = Instance.new("Part")
+        beam.Name = "GroundBeam"
+        beam.Size = Vector3.new(0.5, 50, 0.5)
+        beam.Position = position
+        beam.Material = Enum.Material.Neon
+        beam.Color = Color3.fromRGB(255, 255, 100)
+        beam.Anchored = true
+        beam.CanCollide = false
+        beam.Transparency = 0.6
+        beam.Parent = previewFolder
+        
+        -- Add top glow sphere
+        local sphere = Instance.new("Part")
+        sphere.Name = "GlowSphere"
+        sphere.Size = Vector3.new(3, 3, 3)
+        sphere.Shape = Enum.PartType.Ball
+        sphere.Position = position + Vector3.new(0, 8, 0)
+        sphere.Material = Enum.Material.Neon
+        sphere.Color = Color3.fromRGB(150, 255, 150)
+        sphere.Anchored = true
+        sphere.CanCollide = false
+        sphere.Transparency = 0.5
+        sphere.Parent = previewFolder
+        
+        -- Animate the rings
+        spawn(function()
+            local rotation = 0
+            while cylinder and cylinder.Parent do
+                rotation = rotation + 2
+                if ring1 and ring1.Parent then
+                    ring1.Orientation = Vector3.new(0, rotation, 90)
+                end
+                if ring2 and ring2.Parent then
+                    ring2.Orientation = Vector3.new(0, -rotation * 1.5, 90)
+                end
+                -- Pulse the sphere
+                if sphere and sphere.Parent then
+                    local pulse = 0.5 + math.sin(rotation * 0.1) * 0.2
+                    sphere.Transparency = pulse
+                end
+                task.wait(0.03)
+            end
+        end)
+        
+        return cylinder
     end
     
     function self.applyTilt(points, tilt)
