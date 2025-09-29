@@ -1,351 +1,261 @@
--- Main Script - Plant & House Builder Pro with Correct WindUI Implementation
--- Replace "YOUR_GITHUB_USERNAME" and "YOUR_REPO_NAME" with your actual GitHub details
+-- Log Wall Builder Pro - Module Script
+-- Host this file on GitHub
 
--- Load WindUI (correct URL from documentation)
-local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+local LogWallBuilderModule = {}
 
--- Load the module from GitHub (REPLACE WITH YOUR GITHUB LINK)
-local PlantHouseBuilder = loadstring(game:HttpGet("https://raw.githubusercontent.com/checkurasshole/Script/refs/heads/main/9999"))()
+function LogWallBuilderModule.Init()
+    -- Services & Remotes
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Players = game:GetService("Players")
+    local TweenService = game:GetService("TweenService")
+    local CraftItem = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("CraftItem")
+    local RequestPlaceStructure = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("RequestPlaceStructure")
+    local ClassStatUpdated = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ClassStatUpdated")
+    local player = Players.LocalPlayer
+    local inventory = player:WaitForChild("Inventory")
 
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+    -- Configuration
+    local Config = {
+        structureName = "Log Wall",
+        radius = 6,
+        numWalls = 12,
+        buildSpeed = 0.1,
+        teleportToStructure = false,
+        isBuilding = false,
+        previewEnabled = true,
+        skyMode = false,
+        centerX = 0,
+        centerZ = 0,
+        centerY = 0,
+        tilt = 0,
+        maxZoom = 400,
+        woodPerWall = 10
+    }
 
--- Set WindUI theme
-WindUI:SetTheme("Dark")
+    -- Initialize preview folder
+    local previewFolder = workspace:FindFirstChild("BuilderPreview")
+    if previewFolder then previewFolder:Destroy() end
+    previewFolder = Instance.new("Folder")
+    previewFolder.Name = "BuilderPreview"
+    previewFolder.Parent = workspace
 
--- Create WindUI Window (proper syntax from examples)
-local Window = WindUI:CreateWindow({
-    Title = "Plant & House Builder Pro",
-    Icon = "hammer",
-    Author = "Fast Build - Mob Defense",
-    Folder = "PlantHouseBuilderConfig",
-    Size = UDim2.fromOffset(420, 380),
-    Theme = "Dark",
-    Transparent = true,
-    SideBarWidth = 120,
-    HideSearchBar = false
-})
+    local connections = {}
+    local isActive = true
+    local resourceButton, requiredButton
 
--- Add version tag
-Window:Tag({
-    Title = "v2.0",
-    Color = Color3.fromHex("#30ff6a"),
-    Radius = 5
-})
-
--- Create single tab
-local MainTab = Window:Tab({
-    Title = "Builder",
-    Icon = "hammer"
-})
-
--- Resource tracking variables
-local resourceButton, requiredButton
-
-local function updateResourceDisplay()
-    local available = PlantHouseBuilder.countAvailableItems(PlantHouseBuilder.config.itemFilter)
-    local currentTime = os.date("%H:%M:%S")
-    
-    local totalRequired = 0
-    local breakdown = ""
-    
-    if PlantHouseBuilder.config.plantShape ~= "none" and PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape] then
-        local plantPoints = PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape](PlantHouseBuilder.config.size, PlantHouseBuilder.config.density)
-        totalRequired = totalRequired + #plantPoints
-        breakdown = breakdown .. "Plants: " .. #plantPoints .. "\n"
+    -- Resource tracking functions
+    local function countAvailableLogs()
+        local count = 0
+        local itemsFolder = workspace:FindFirstChild("Items")
+        
+        if itemsFolder then
+            for _, item in pairs(itemsFolder:GetChildren()) do
+                if item.Name == "Log" then
+                    count = count + 1
+                end
+            end
+        end
+        return count
     end
-    
-    if PlantHouseBuilder.config.houseType ~= "none" and PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType] then
-        local housePoints = PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType](PlantHouseBuilder.config.size)
-        totalRequired = totalRequired + #housePoints
-        breakdown = breakdown .. "House blocks: " .. #housePoints .. "\n"
+
+    local function getAvailableWood()
+        local woodTextLabel = workspace.Map.Campground.CraftingBench.WoodSign.SurfaceGui.TextLabel
+        local woodText = tostring(woodTextLabel.Text)
+        local woodCount = tonumber(woodText) or 0
+        return woodCount
     end
-    
-    if resourceButton then
-        resourceButton:SetTitle("You have " .. available .. " " .. PlantHouseBuilder.config.itemFilter .. " items available")
-        resourceButton:SetDesc("Last checked: " .. currentTime)
-    end
-    
-    if requiredButton then
-        if totalRequired > 0 then
-            local status = available >= totalRequired and "ENOUGH ITEMS" or "NEED MORE ITEMS"
-            local missing = math.max(0, totalRequired - available)
+
+    local function updateResourceDisplay()
+        local availableLogs = countAvailableLogs()
+        local availableWood = getAvailableWood()
+        local totalWallsNeeded = Config.numWalls
+        local woodPerWall = Config.woodPerWall
+        local totalWoodNeeded = totalWallsNeeded * woodPerWall
+        local currentTime = os.date("%H:%M:%S")
+        
+        if resourceButton then
+            resourceButton:SetTitle("Available Resources")
+            resourceButton:SetDesc("Logs: " .. availableLogs .. " | Wood: " .. availableWood .. " | Updated: " .. currentTime)
+        end
+        
+        if requiredButton then
+            local hasEnoughWood = availableWood >= totalWoodNeeded
+            local status = hasEnoughWood and "✓ READY TO BUILD" or "✗ NEED MORE WOOD"
+            local missingWood = math.max(0, totalWoodNeeded - availableWood)
             
-            requiredButton:SetTitle(breakdown .. "Total needed: " .. totalRequired)
-            requiredButton:SetDesc(status .. (missing > 0 and " • Missing: " .. missing .. " items" or " • Ready to build!"))
+            local desc = "Building " .. totalWallsNeeded .. " walls × " .. woodPerWall .. " wood each\n"
+            desc = desc .. status
+            if missingWood > 0 then
+                desc = desc .. " • Missing: " .. missingWood .. " wood"
+                local logsNeededForWood = math.ceil(missingWood / 5)
+                desc = desc .. "\n(Need ~" .. logsNeededForWood .. " more logs to craft missing wood)"
+            else
+                desc = desc .. " • You have enough wood!"
+            end
+            
+            requiredButton:SetTitle("Required: " .. totalWoodNeeded .. " wood total")
+            requiredButton:SetDesc(desc)
+        end
+    end
+
+    -- Preview Functions
+    local function createPreviewPoint(position, color)
+        local part = Instance.new("Part")
+        part.Name = "PreviewPoint"
+        part.Size = Vector3.new(3, 12, 3)
+        part.Position = position
+        part.Material = Enum.Material.Neon
+        part.Color = color
+        part.Anchored = true
+        part.CanCollide = false
+        part.Transparency = 0.2
+        part.Parent = previewFolder
+        
+        return part
+    end
+
+    local function applyTilt(points, tilt)
+        if tilt == 0 then return points end
+        
+        local tiltedPoints = {}
+        local cos_t = math.cos(math.rad(tilt))
+        local sin_t = math.sin(math.rad(tilt))
+        
+        for _, point in pairs(points) do
+            local x, y, z = point.X, point.Y, point.Z
+            local newY = y * cos_t - z * sin_t
+            local newZ = y * sin_t + z * cos_t
+            table.insert(tiltedPoints, Vector3.new(x, newY, newZ))
+        end
+        
+        return tiltedPoints
+    end
+
+    local function getCenterPosition()
+        local char = player.Character
+        if not char or not char:FindFirstChild("HumanoidRootPart") then
+            return CFrame.new(Config.centerX, Config.centerY, Config.centerZ)
+        end
+        
+        local root = char.HumanoidRootPart
+        
+        if Config.centerX ~= 0 or Config.centerZ ~= 0 then
+            return CFrame.new(Config.centerX, root.Position.Y + Config.centerY, Config.centerZ)
+        end
+        
+        return root.CFrame * CFrame.new(0, Config.centerY, 0)
+    end
+
+    local function calculateWallPositions()
+        local centerCFrame = getCenterPosition()
+        local positions = {}
+        
+        local groundY
+        if Config.skyMode then
+            groundY = 100
         else
-            requiredButton:SetTitle("Required Items")
-            requiredButton:SetDesc("Select a plant shape or house type to see requirements")
-        end
-    end
-end
-
--- Resource display buttons
-resourceButton = MainTab:Button({
-    Title = "Available Items",
-    Desc = "Loading...",
-    Icon = "package",
-    Callback = function()
-        updateResourceDisplay()
-        WindUI:Notify({
-            Title = "Resources Updated",
-            Content = "Item counts have been refreshed",
-            Icon = "refresh-cw",
-            Duration = 2
-        })
-    end
-})
-
-requiredButton = MainTab:Button({
-    Title = "Required Items", 
-    Desc = "Select something to build...",
-    Icon = "info",
-    Callback = function() end
-})
-
-MainTab:Button({
-    Title = "Refresh Count",
-    Desc = "",
-    Icon = "refresh-cw",
-    Callback = function()
-        updateResourceDisplay()
-        WindUI:Notify({
-            Title = "Resources Updated",
-            Content = "",
-            Icon = "refresh-cw",
-            Duration = 2
-        })
-    end
-})
-
--- Start resource tracking
-spawn(function()
-    while PlantHouseBuilder.isActive do
-        updateResourceDisplay()
-        wait(10)
-    end
-end)
-
-MainTab:Space()
-
--- Plant Shape Dropdown
-MainTab:Dropdown({
-    Title = "Plant Shape",
-    Desc = "",
-    Values = {"none", "circle", "square", "star"},
-    Value = PlantHouseBuilder.config.plantShape,
-    Callback = function(value)
-        PlantHouseBuilder.config.plantShape = value
-        PlantHouseBuilder.updatePreview()
-        updateResourceDisplay()
-    end
-})
-
--- House Type Dropdown
-MainTab:Dropdown({
-    Title = "House Type",
-    Desc = "",
-    Values = {"none", "small_house", "large_house", "castle", "fortress"},
-    Value = PlantHouseBuilder.config.houseType,
-    Callback = function(value)
-        PlantHouseBuilder.config.houseType = value
-        PlantHouseBuilder.updatePreview()
-        updateResourceDisplay()
-    end
-})
-
-MainTab:Space()
-
--- Size Slider
-MainTab:Slider({
-    Title = "Size",
-    Desc = "",
-    Value = {
-        Min = 20,
-        Max = 150,
-        Default = PlantHouseBuilder.config.size
-    },
-    Callback = function(value)
-        PlantHouseBuilder.config.size = value
-        PlantHouseBuilder.updatePreview()
-        updateResourceDisplay()
-    end
-})
-
--- Plant Count Slider
-MainTab:Slider({
-    Title = "Plant Count",
-    Desc = "",
-    Value = {
-        Min = 5,
-        Max = 80,
-        Default = PlantHouseBuilder.config.density
-    },
-    Callback = function(value)
-        PlantHouseBuilder.config.density = value
-        PlantHouseBuilder.updatePreview()
-        updateResourceDisplay()
-    end
-})
-
-MainTab:Space()
-
--- Position Sliders
-MainTab:Slider({
-    Title = "X Position",
-    Desc = "",
-    Value = {
-        Min = -300,
-        Max = 300,
-        Default = PlantHouseBuilder.config.centerX
-    },
-    Callback = function(value)
-        PlantHouseBuilder.config.centerX = value
-        PlantHouseBuilder.updatePreview()
-    end
-})
-
-MainTab:Slider({
-    Title = "Z Position",
-    Desc = "",
-    Value = {
-        Min = -300,
-        Max = 300,
-        Default = PlantHouseBuilder.config.centerZ
-    },
-    Callback = function(value)
-        PlantHouseBuilder.config.centerZ = value
-        PlantHouseBuilder.updatePreview()
-    end
-})
-
-MainTab:Slider({
-    Title = "Y Position (Height)",
-    Desc = "",
-    Value = {
-        Min = -50,
-        Max = 100,
-        Default = PlantHouseBuilder.config.centerY
-    },
-    Callback = function(value)
-        PlantHouseBuilder.config.centerY = value
-        PlantHouseBuilder.updatePreview()
-    end
-})
-
--- Tilt Slider
-MainTab:Slider({
-    Title = "Tilt",
-    Desc = "",
-    Value = {
-        Min = -90,
-        Max = 90,
-        Default = PlantHouseBuilder.config.tilt
-    },
-    Callback = function(value)
-        PlantHouseBuilder.config.tilt = value
-        PlantHouseBuilder.updatePreview()
-    end
-})
-
--- Use Player Position Button
-MainTab:Button({
-    Title = "Use Player Position",
-    Desc = "",
-    Icon = "map-pin",
-    Callback = function()
-        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            local pos = player.Character.HumanoidRootPart.Position
-            PlantHouseBuilder.config.centerX = math.floor(pos.X)
-            PlantHouseBuilder.config.centerZ = math.floor(pos.Z)
-            PlantHouseBuilder.updatePreview()
+            local terrainPos = centerCFrame.Position
+            local rayOrigin = Vector3.new(terrainPos.X, 500, terrainPos.Z)
+            local rayDirection = Vector3.new(0, -1000, 0)
             
-            WindUI:Notify({
-                Title = "Position Updated",
-                Content = "Set to player position",
-                Icon = "map-pin",
-                Duration = 2
-            })
+            local raycastParams = RaycastParams.new()
+            raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+            raycastParams.FilterDescendantsInstances = {previewFolder, player.Character}
+            
+            local rayResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+            
+            if rayResult then
+                groundY = rayResult.Position.Y
+            else
+                groundY = terrainPos.Y
+            end
+        end
+        
+        for i = 1, Config.numWalls do
+            local angle = (i - 1) * (360 / Config.numWalls)
+            local angleRad = math.rad(angle)
+            
+            local xOffset = math.sin(angleRad) * Config.radius
+            local zOffset = math.cos(angleRad) * Config.radius
+            
+            local position = Vector3.new(
+                centerCFrame.Position.X + xOffset,
+                groundY + Config.centerY,
+                centerCFrame.Position.Z + zOffset
+            )
+            
+            if Config.tilt ~= 0 then
+                local relativePos = position - centerCFrame.Position
+                local tiltedPoints = applyTilt({relativePos}, Config.tilt)
+                position = centerCFrame.Position + tiltedPoints[1]
+            end
+            
+            table.insert(positions, position)
+        end
+        
+        return positions
+    end
+
+    local function updatePreview()
+        if not Config.previewEnabled then
+            for _, child in pairs(previewFolder:GetChildren()) do
+                child:Destroy()
+            end
+            return
+        end
+        
+        previewFolder:ClearAllChildren()
+        
+        local positions = calculateWallPositions()
+        
+        for _, position in pairs(positions) do
+            createPreviewPoint(position, Color3.fromRGB(255, 100, 150))
         end
     end
-})
 
-MainTab:Space()
-
--- Item Filter Input
-MainTab:Input({
-    Title = "Item Filter",
-    Desc = "",
-    Placeholder = "sap",
-    Value = PlantHouseBuilder.config.itemFilter,
-    Icon = "search",
-    Callback = function(value)
-        PlantHouseBuilder.config.itemFilter = value
-        updateResourceDisplay()
+    local function getLatestInventoryItem()
+        local items = inventory:GetChildren()
+        if #items == 0 then return nil end
+        return items[#items]
     end
-})
 
--- Build Speed Slider
-MainTab:Slider({
-    Title = "Build Speed (Fast)",
-    Desc = "",
-    Value = {
-        Min = 5,
-        Max = 50,
-        Default = PlantHouseBuilder.config.buildSpeed
-    },
-    Callback = function(value)
-        PlantHouseBuilder.config.buildSpeed = value
+    local function buildStructure(name, teleportToStructure)
+        local char = player.Character or player.CharacterAdded:Wait()
+        local root = char:WaitForChild("HumanoidRootPart")
+        
+        CraftItem:InvokeServer(name)
+        task.wait(0.2)
+        
+        local structureItem = getLatestInventoryItem()
+        if not structureItem then
+            warn("No structure item found in inventory for "..name)
+            return
+        end
+        
+        local placeCFrame = root.CFrame * CFrame.new(0, 0, -5)
+        local pos = placeCFrame.Position
+        
+        local args = {
+            structureItem,
+            {
+                Valid = true,
+                CFrame = placeCFrame,
+                Position = pos
+            },
+            placeCFrame
+        }
+        
+        RequestPlaceStructure:InvokeServer(unpack(args))
+        firesignal(ClassStatUpdated.OnClientEvent, "Blacksmith", "BuildStructures", 13, 1)
+        
+        if teleportToStructure then
+            task.wait(0.5)
+            root.CFrame = placeCFrame * CFrame.new(0, 0, 3)
+        end
     end
-})
 
--- Preview Toggle
-MainTab:Toggle({
-    Title = "Show Preview",
-    Desc = "",
-    Value = PlantHouseBuilder.config.previewEnabled,
-    Callback = function(state)
-        PlantHouseBuilder.config.previewEnabled = state
-        PlantHouseBuilder.updatePreview()
-    end
-})
-
--- Sky Mode Toggle
-MainTab:Toggle({
-    Title = "Sky Mode",
-    Desc = "",
-    Value = PlantHouseBuilder.config.skyMode,
-    Callback = function(state)
-        PlantHouseBuilder.config.skyMode = state
-        PlantHouseBuilder.updatePreview()
-    end
-})
-
--- Max Zoom Slider
-MainTab:Slider({
-    Title = "Max Zoom Distance",
-    Desc = "",
-    Value = {
-        Min = 50,
-        Max = 2000,
-        Default = PlantHouseBuilder.config.maxZoom
-    },
-    Callback = function(value)
-        PlantHouseBuilder.config.maxZoom = value
-        player.CameraMaxZoomDistance = value
-    end
-})
-
-MainTab:Space()
-
--- Start Building Button
-MainTab:Button({
-    Title = "START BUILDING",
-    Desc = "",
-    Icon = "play",
-    Color = Color3.fromHex("#30ff6a"),
-    Callback = function()
-        if PlantHouseBuilder.config.isBuilding then
+    local function surroundCharacter(structureName, WindUI)
+        if Config.isBuilding then
             WindUI:Notify({
                 Title = "Already Building",
                 Content = "Please wait for current build to finish",
@@ -355,103 +265,92 @@ MainTab:Button({
             return
         end
         
-        local allPoints = {}
+        local availableWood = getAvailableWood()
+        local neededWood = Config.numWalls * Config.woodPerWall
         
-        -- Add plant points
-        if PlantHouseBuilder.config.plantShape ~= "none" and PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape] then
-            local plantPoints = PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape](PlantHouseBuilder.config.size, PlantHouseBuilder.config.density)
-            for _, point in pairs(plantPoints) do
-                table.insert(allPoints, point)
-            end
+        if availableWood < neededWood then
+            WindUI:Notify({
+                Title = "Not Enough Wood!",
+                Content = "Need " .. (neededWood - availableWood) .. " more wood",
+                Icon = "x-circle",
+                Duration = 5
+            })
+            return
         end
         
-        -- Add house points
-        if PlantHouseBuilder.config.houseType ~= "none" and PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType] then
-            local housePoints = PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType](PlantHouseBuilder.config.size)
-            for _, point in pairs(housePoints) do
-                table.insert(allPoints, point)
-            end
-        end
+        Config.isBuilding = true
         
-        if #allPoints > 0 then
-            local available = PlantHouseBuilder.countAvailableItems(PlantHouseBuilder.config.itemFilter)
-            if available < #allPoints then
-                WindUI:Notify({
-                    Title = "Not Enough Items!",
-                    Content = "Need " .. (#allPoints - available) .. " more items",
-                    Icon = "x-circle",
-                    Duration = 5
-                })
-                return
+        local centerCFrame = getCenterPosition()
+        
+        WindUI:Notify({
+            Title = "Building Started",
+            Content = "Placing " .. Config.numWalls .. " walls",
+            Icon = "hammer",
+            Duration = 2
+        })
+        
+        local positions = calculateWallPositions()
+        
+        for i, position in ipairs(positions) do
+            if not Config.isBuilding then break end
+            
+            CraftItem:InvokeServer(structureName)
+            task.wait(0.2)
+            
+            local structureItem = getLatestInventoryItem()
+            if not structureItem then
+                warn("No structure item found for " .. structureName)
+                continue
             end
             
-            PlantHouseBuilder.buildAtPositions(allPoints)
-            WindUI:Notify({
-                Title = "Building Started!",
-                Content = "Building " .. #allPoints .. " blocks",
-                Icon = "hammer",
-                Duration = 3
-            })
-        else
-            WindUI:Notify({
-                Title = "Nothing Selected",
-                Content = "Please select a plant shape or house type",
-                Icon = "alert-triangle",
-                Duration = 3
-            })
+            local centerPos = centerCFrame.Position
+            local lookDirection = (centerPos - position).Unit
+            local rightVector = Vector3.new(0, 1, 0):Cross(lookDirection)
+            local upVector = lookDirection:Cross(rightVector)
+            
+            local wallCFrame = CFrame.fromMatrix(position, rightVector, upVector, lookDirection)
+            
+            local args = {
+                structureItem,
+                {
+                    Valid = true,
+                    CFrame = wallCFrame,
+                    Position = position
+                },
+                wallCFrame
+            }
+            
+            RequestPlaceStructure:InvokeServer(unpack(args))
+            task.wait(Config.buildSpeed)
         end
-    end
-})
-
--- Stop Building Button
-MainTab:Button({
-    Title = "STOP BUILDING",
-    Desc = "",
-    Icon = "square",
-    Color = Color3.fromHex("#ff4830"),
-    Callback = function()
-        PlantHouseBuilder.config.isBuilding = false
-        PlantHouseBuilder.config.pendingPositions = {}
+        
+        firesignal(ClassStatUpdated.OnClientEvent, "Blacksmith", "BuildStructures", 13, Config.numWalls)
+        Config.isBuilding = false
+        
+        updateResourceDisplay()
+        
         WindUI:Notify({
-            Title = "Building Stopped",
-            Content = "All pending builds cancelled",
-            Icon = "square",
-            Duration = 2
+            Title = "Building Complete!",
+            Content = "Placed " .. Config.numWalls .. " walls",
+            Icon = "check-circle",
+            Duration = 3
         })
     end
-})
 
--- Clear Preview Button
-MainTab:Button({
-    Title = "Clear Preview",
-    Desc = "",
-    Icon = "trash-2",
-    Callback = function()
-        PlantHouseBuilder.previewFolder:ClearAllChildren()
-        WindUI:Notify({
-            Title = "Preview Cleared",
-            Content = "",
-            Icon = "trash-2",
-            Duration = 2
-        })
-    end
-})
+    -- Return functions and config for UI setup
+    return {
+        Config = Config,
+        updateResourceDisplay = updateResourceDisplay,
+        updatePreview = updatePreview,
+        buildStructure = buildStructure,
+        surroundCharacter = surroundCharacter,
+        previewFolder = previewFolder,
+        connections = connections,
+        isActive = isActive,
+        setResourceButton = function(btn) resourceButton = btn end,
+        setRequiredButton = function(btn) requiredButton = btn end,
+        setIsActive = function(val) isActive = val end
+    }
+end
 
--- Cleanup on player leaving
-table.insert(PlantHouseBuilder.connections, game.Players.PlayerRemoving:Connect(function(plr)
-    if plr == player then 
-        PlantHouseBuilder.cleanup() 
-    end
-end))
-
--- Initial setup
-updateResourceDisplay()
-PlantHouseBuilder.updatePreview()
-
--- Success notification
-WindUI:Notify({
-    Title = "Builder Loaded!",
-    Content = "Plant & House Builder Pro is ready to use",
-    Icon = "check-circle",
-    Duration = 3
-})
+return LogWallBuilderModule
