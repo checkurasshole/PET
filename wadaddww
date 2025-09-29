@@ -36,11 +36,11 @@ function WallBuilderModule.new(WindUI)
         woodPerWall = 10
     }
     
-    -- Initialize preview folder
-    local previewFolder = workspace:FindFirstChild("WallBuilderPreview_V2")
+    -- Initialize preview folder with unique name
+    local previewFolder = workspace:FindFirstChild("WallBuilderPreviewSystem")
     if previewFolder then previewFolder:Destroy() end
     previewFolder = Instance.new("Folder")
-    previewFolder.Name = "WallBuilderPreview_V2"
+    previewFolder.Name = "WallBuilderPreviewSystem"
     previewFolder.Parent = workspace
     
     local connections = {}
@@ -102,53 +102,93 @@ function WallBuilderModule.new(WindUI)
         end
     end
     
-    -- Preview Functions
-    function self.createPreviewPoint(position, rotation)
-        -- Create main pillar
-        local pillar = Instance.new("Part")
-        pillar.Name = "WallPreview_Pillar"
-        pillar.Size = Vector3.new(1.5, 15, 1.5)
-        pillar.Position = position
-        pillar.CFrame = rotation
-        pillar.Material = Enum.Material.ForceField
-        pillar.Color = Color3.fromRGB(100, 255, 200)
-        pillar.Anchored = true
-        pillar.CanCollide = false
-        pillar.Transparency = 0.4
-        pillar.Parent = previewFolder
+    -- Preview Functions - NEW DESIGN
+    function self.createPreviewPoint(position, color)
+        -- Create main cylinder marker
+        local cylinder = Instance.new("Part")
+        cylinder.Name = "WallPreviewMarker"
+        cylinder.Size = Vector3.new(2, 14, 2)
+        cylinder.Position = position
+        cylinder.Material = Enum.Material.ForceField
+        cylinder.Color = Color3.fromRGB(100, 200, 255)
+        cylinder.Anchored = true
+        cylinder.CanCollide = false
+        cylinder.Transparency = 0.4
+        cylinder.Parent = previewFolder
         
-        -- Create top sphere indicator
+        -- Add spinning rings
+        local ring1 = Instance.new("Part")
+        ring1.Name = "Ring1"
+        ring1.Size = Vector3.new(6, 0.3, 6)
+        ring1.Shape = Enum.PartType.Cylinder
+        ring1.Position = position + Vector3.new(0, 5, 0)
+        ring1.Material = Enum.Material.Neon
+        ring1.Color = Color3.fromRGB(0, 255, 200)
+        ring1.Anchored = true
+        ring1.CanCollide = false
+        ring1.Transparency = 0.3
+        ring1.Orientation = Vector3.new(0, 0, 90)
+        ring1.Parent = previewFolder
+        
+        local ring2 = Instance.new("Part")
+        ring2.Name = "Ring2"
+        ring2.Size = Vector3.new(4, 0.2, 4)
+        ring2.Shape = Enum.PartType.Cylinder
+        ring2.Position = position + Vector3.new(0, -5, 0)
+        ring2.Material = Enum.Material.Neon
+        ring2.Color = Color3.fromRGB(255, 100, 200)
+        ring2.Anchored = true
+        ring2.CanCollide = false
+        ring2.Transparency = 0.3
+        ring2.Orientation = Vector3.new(0, 0, 90)
+        ring2.Parent = previewFolder
+        
+        -- Add beam to ground
+        local beam = Instance.new("Part")
+        beam.Name = "GroundBeam"
+        beam.Size = Vector3.new(0.5, 50, 0.5)
+        beam.Position = position
+        beam.Material = Enum.Material.Neon
+        beam.Color = Color3.fromRGB(255, 255, 100)
+        beam.Anchored = true
+        beam.CanCollide = false
+        beam.Transparency = 0.6
+        beam.Parent = previewFolder
+        
+        -- Add top glow sphere
         local sphere = Instance.new("Part")
-        sphere.Name = "WallPreview_Top"
-        sphere.Shape = Enum.PartType.Ball
+        sphere.Name = "GlowSphere"
         sphere.Size = Vector3.new(3, 3, 3)
+        sphere.Shape = Enum.PartType.Ball
         sphere.Position = position + Vector3.new(0, 8, 0)
         sphere.Material = Enum.Material.Neon
-        sphere.Color = Color3.fromRGB(255, 150, 100)
+        sphere.Color = Color3.fromRGB(150, 255, 150)
         sphere.Anchored = true
         sphere.CanCollide = false
-        sphere.Transparency = 0.3
+        sphere.Transparency = 0.5
         sphere.Parent = previewFolder
         
-        -- Create ground marker
-        local groundMarker = Instance.new("Part")
-        groundMarker.Name = "WallPreview_Ground"
-        groundMarker.Size = Vector3.new(4, 0.5, 4)
-        groundMarker.Position = position + Vector3.new(0, -7, 0)
-        groundMarker.Material = Enum.Material.Neon
-        groundMarker.Color = Color3.fromRGB(255, 100, 255)
-        groundMarker.Anchored = true
-        groundMarker.CanCollide = false
-        groundMarker.Transparency = 0.5
-        groundMarker.Parent = previewFolder
+        -- Animate the rings
+        spawn(function()
+            local rotation = 0
+            while cylinder and cylinder.Parent do
+                rotation = rotation + 2
+                if ring1 and ring1.Parent then
+                    ring1.Orientation = Vector3.new(0, rotation, 90)
+                end
+                if ring2 and ring2.Parent then
+                    ring2.Orientation = Vector3.new(0, -rotation * 1.5, 90)
+                end
+                -- Pulse the sphere
+                if sphere and sphere.Parent then
+                    local pulse = 0.5 + math.sin(rotation * 0.1) * 0.2
+                    sphere.Transparency = pulse
+                end
+                task.wait(0.03)
+            end
+        end)
         
-        -- Add pulsing effect to sphere
-        local tweenInfo = TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-        local goal = {Transparency = 0.7}
-        local tween = TweenService:Create(sphere, tweenInfo, goal)
-        tween:Play()
-        
-        return pillar
+        return cylinder
     end
     
     function self.applyTilt(points, tilt)
@@ -187,25 +227,12 @@ function WallBuilderModule.new(WindUI)
         local centerCFrame = self.getCenterPosition()
         local positions = {}
         
-        local groundY
+        -- Get the base Y position from center
+        local baseY = centerCFrame.Position.Y
+        
+        -- If sky mode, override to 100
         if self.Config.skyMode then
-            groundY = 100
-        else
-            local terrainPos = centerCFrame.Position
-            local rayOrigin = Vector3.new(terrainPos.X, 500, terrainPos.Z)
-            local rayDirection = Vector3.new(0, -1000, 0)
-            
-            local raycastParams = RaycastParams.new()
-            raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-            raycastParams.FilterDescendantsInstances = {previewFolder, player.Character}
-            
-            local rayResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
-            
-            if rayResult then
-                groundY = rayResult.Position.Y
-            else
-                groundY = terrainPos.Y
-            end
+            baseY = 100
         end
         
         for i = 1, self.Config.numWalls do
@@ -217,7 +244,7 @@ function WallBuilderModule.new(WindUI)
             
             local position = Vector3.new(
                 centerCFrame.Position.X + xOffset,
-                groundY + self.Config.centerY,
+                baseY + self.Config.centerY,
                 centerCFrame.Position.Z + zOffset
             )
             
@@ -245,8 +272,52 @@ function WallBuilderModule.new(WindUI)
         
         local positions = self.calculateWallPositions()
         
-        for _, position in pairs(positions) do
-            self.createPreviewPoint(position, Color3.fromRGB(255, 100, 150))
+        -- Create markers at each position
+        for i, position in pairs(positions) do
+            -- Alternate colors for variety
+            local colorVariant = i % 3
+            local color = Color3.fromRGB(255, 100, 150)
+            if colorVariant == 0 then
+                color = Color3.fromRGB(100, 200, 255)
+            elseif colorVariant == 1 then
+                color = Color3.fromRGB(150, 255, 150)
+            end
+            self.createPreviewPoint(position, color)
+        end
+        
+        -- Add center marker
+        local centerPos = self.getCenterPosition().Position
+        local centerMarker = Instance.new("Part")
+        centerMarker.Name = "CenterMarker"
+        centerMarker.Size = Vector3.new(4, 1, 4)
+        centerMarker.Position = centerPos
+        centerMarker.Material = Enum.Material.Neon
+        centerMarker.Color = Color3.fromRGB(255, 255, 0)
+        centerMarker.Anchored = true
+        centerMarker.CanCollide = false
+        centerMarker.Transparency = 0.5
+        centerMarker.Shape = Enum.PartType.Cylinder
+        centerMarker.Orientation = Vector3.new(0, 0, 90)
+        centerMarker.Parent = previewFolder
+        
+        -- Add radius circle outline
+        for i = 1, 32 do
+            local angle = (i - 1) * (360 / 32)
+            local angleRad = math.rad(angle)
+            local xOff = math.sin(angleRad) * self.Config.radius
+            local zOff = math.cos(angleRad) * self.Config.radius
+            
+            local dot = Instance.new("Part")
+            dot.Name = "RadiusOutline"
+            dot.Size = Vector3.new(1, 0.5, 1)
+            dot.Position = centerPos + Vector3.new(xOff, 0, zOff)
+            dot.Material = Enum.Material.Neon
+            dot.Color = Color3.fromRGB(255, 255, 100)
+            dot.Anchored = true
+            dot.CanCollide = false
+            dot.Transparency = 0.7
+            dot.Shape = Enum.PartType.Ball
+            dot.Parent = previewFolder
         end
     end
     
