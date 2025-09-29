@@ -36,11 +36,11 @@ function WallBuilderModule.new(WindUI)
         woodPerWall = 10
     }
     
-    -- Initialize preview folder with unique name
-    local previewFolder = workspace:FindFirstChild("WallBuilderPreviewSystem")
+    -- Initialize preview folder
+    local previewFolder = workspace:FindFirstChild("WallBuilderPreview_V2")
     if previewFolder then previewFolder:Destroy() end
     previewFolder = Instance.new("Folder")
-    previewFolder.Name = "WallBuilderPreviewSystem"
+    previewFolder.Name = "WallBuilderPreview_V2"
     previewFolder.Parent = workspace
     
     local connections = {}
@@ -102,72 +102,53 @@ function WallBuilderModule.new(WindUI)
         end
     end
     
-    -- Preview Functions with completely new design
-    function self.createPreviewPoint(position, index, totalWalls)
-        -- Create main wall preview (matches actual log wall size)
-        local wallPreview = Instance.new("Part")
-        wallPreview.Name = "WallPreview_" .. index
-        wallPreview.Size = Vector3.new(15.19, 14.56, 4.64) -- Actual log wall size
-        wallPreview.Position = position
-        wallPreview.Material = Enum.Material.ForceField
-        wallPreview.Color = Color3.fromRGB(100, 200, 255)
-        wallPreview.Anchored = true
-        wallPreview.CanCollide = false
-        wallPreview.Transparency = 0.6
-        wallPreview.Parent = previewFolder
+    -- Preview Functions
+    function self.createPreviewPoint(position, rotation)
+        -- Create main pillar
+        local pillar = Instance.new("Part")
+        pillar.Name = "WallPreview_Pillar"
+        pillar.Size = Vector3.new(1.5, 15, 1.5)
+        pillar.Position = position
+        pillar.CFrame = rotation
+        pillar.Material = Enum.Material.ForceField
+        pillar.Color = Color3.fromRGB(100, 255, 200)
+        pillar.Anchored = true
+        pillar.CanCollide = false
+        pillar.Transparency = 0.4
+        pillar.Parent = previewFolder
         
-        -- Add outline effect with SelectionBox
-        local outline = Instance.new("SelectionBox")
-        outline.Adornee = wallPreview
-        outline.LineThickness = 0.05
-        outline.Color3 = Color3.fromRGB(0, 255, 255)
-        outline.Transparency = 0.3
-        outline.Parent = wallPreview
+        -- Create top sphere indicator
+        local sphere = Instance.new("Part")
+        sphere.Name = "WallPreview_Top"
+        sphere.Shape = Enum.PartType.Ball
+        sphere.Size = Vector3.new(3, 3, 3)
+        sphere.Position = position + Vector3.new(0, 8, 0)
+        sphere.Material = Enum.Material.Neon
+        sphere.Color = Color3.fromRGB(255, 150, 100)
+        sphere.Anchored = true
+        sphere.CanCollide = false
+        sphere.Transparency = 0.3
+        sphere.Parent = previewFolder
         
-        -- Add number label on top
-        local billboardGui = Instance.new("BillboardGui")
-        billboardGui.Name = "NumberLabel"
-        billboardGui.Size = UDim2.new(0, 60, 0, 60)
-        billboardGui.StudsOffset = Vector3.new(0, 8, 0)
-        billboardGui.AlwaysOnTop = true
-        billboardGui.Parent = wallPreview
+        -- Create ground marker
+        local groundMarker = Instance.new("Part")
+        groundMarker.Name = "WallPreview_Ground"
+        groundMarker.Size = Vector3.new(4, 0.5, 4)
+        groundMarker.Position = position + Vector3.new(0, -7, 0)
+        groundMarker.Material = Enum.Material.Neon
+        groundMarker.Color = Color3.fromRGB(255, 100, 255)
+        groundMarker.Anchored = true
+        groundMarker.CanCollide = false
+        groundMarker.Transparency = 0.5
+        groundMarker.Parent = previewFolder
         
-        local textLabel = Instance.new("TextLabel")
-        textLabel.Size = UDim2.new(1, 0, 1, 0)
-        textLabel.BackgroundTransparency = 0.3
-        textLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-        textLabel.Text = tostring(index)
-        textLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
-        textLabel.TextScaled = true
-        textLabel.Font = Enum.Font.GothamBold
-        textLabel.Parent = billboardGui
+        -- Add pulsing effect to sphere
+        local tweenInfo = TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+        local goal = {Transparency = 0.7}
+        local tween = TweenService:Create(sphere, tweenInfo, goal)
+        tween:Play()
         
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0.3, 0)
-        corner.Parent = textLabel
-        
-        -- Add beam to center
-        local attachment0 = Instance.new("Attachment")
-        attachment0.Position = Vector3.new(0, 7, 0)
-        attachment0.Parent = wallPreview
-        
-        -- Pulsing animation
-        spawn(function()
-            while wallPreview and wallPreview.Parent do
-                for i = 0.4, 0.7, 0.05 do
-                    if not wallPreview or not wallPreview.Parent then break end
-                    wallPreview.Transparency = i
-                    task.wait(0.05)
-                end
-                for i = 0.7, 0.4, -0.05 do
-                    if not wallPreview or not wallPreview.Parent then break end
-                    wallPreview.Transparency = i
-                    task.wait(0.05)
-                end
-            end
-        end)
-        
-        return wallPreview
+        return pillar
     end
     
     function self.applyTilt(points, tilt)
@@ -263,46 +244,9 @@ function WallBuilderModule.new(WindUI)
         previewFolder:ClearAllChildren()
         
         local positions = self.calculateWallPositions()
-        local centerCFrame = self.getCenterPosition()
         
-        -- Create center marker
-        local centerMarker = Instance.new("Part")
-        centerMarker.Name = "CenterMarker"
-        centerMarker.Size = Vector3.new(5, 0.5, 5)
-        centerMarker.Position = centerCFrame.Position
-        centerMarker.Material = Enum.Material.Neon
-        centerMarker.Color = Color3.fromRGB(255, 0, 255)
-        centerMarker.Anchored = true
-        centerMarker.CanCollide = false
-        centerMarker.Transparency = 0.5
-        centerMarker.Shape = Enum.PartType.Cylinder
-        centerMarker.Orientation = Vector3.new(0, 0, 90)
-        centerMarker.Parent = previewFolder
-        
-        -- Create radius circle indicator
-        local circleMarker = Instance.new("Part")
-        circleMarker.Name = "RadiusCircle"
-        circleMarker.Size = Vector3.new(0.3, 0.3, self.Config.radius * 2)
-        circleMarker.Position = centerCFrame.Position
-        circleMarker.Material = Enum.Material.Neon
-        circleMarker.Color = Color3.fromRGB(255, 255, 0)
-        circleMarker.Anchored = true
-        circleMarker.CanCollide = false
-        circleMarker.Transparency = 0.7
-        circleMarker.Shape = Enum.PartType.Ball
-        circleMarker.Parent = previewFolder
-        
-        -- Create wall previews with proper rotation
-        for i, position in pairs(positions) do
-            local wallPreview = self.createPreviewPoint(position, i, #positions)
-            
-            -- Rotate wall to face inward toward center
-            local centerPos = centerCFrame.Position
-            local lookDirection = (centerPos - position).Unit
-            local rightVector = Vector3.new(0, 1, 0):Cross(lookDirection)
-            local upVector = lookDirection:Cross(rightVector)
-            
-            wallPreview.CFrame = CFrame.fromMatrix(position, rightVector, upVector, lookDirection)
+        for _, position in pairs(positions) do
+            self.createPreviewPoint(position, Color3.fromRGB(255, 100, 150))
         end
     end
     
