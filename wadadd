@@ -1,357 +1,664 @@
--- Log Wall Builder Pro - Module Script
--- Host this file on GitHub
+-- PlantHouseBuilder Module with Defense Walls
+-- Put this file in your GitHub repository
 
-local LogWallBuilderModule = {}
+local PlantHouseBuilder = {}
 
-function LogWallBuilderModule.Init(WindUI)
-    -- Services & Remotes
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local Players = game:GetService("Players")
-    local TweenService = game:GetService("TweenService")
-    local CraftItem = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("CraftItem")
-    local RequestPlaceStructure = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("RequestPlaceStructure")
-    local ClassStatUpdated = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ClassStatUpdated")
-    local player = Players.LocalPlayer
-    local inventory = player:WaitForChild("Inventory")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
 
-    -- Configuration
-    local Config = {
-        structureName = "Log Wall",
-        radius = 6,
-        numWalls = 12,
-        buildSpeed = 0.1,
-        teleportToStructure = false,
-        isBuilding = false,
-        previewEnabled = true,
-        skyMode = false,
-        centerX = 0,
-        centerZ = 0,
-        centerY = 0,
-        tilt = 0,
-        maxZoom = 400,
-        woodPerWall = 10
-    }
+-- Default configuration
+PlantHouseBuilder.config = {
+    -- Plant/House settings
+    plantShape = "none",
+    houseType = "none", 
+    size = 50,
+    density = 20,
+    itemFilter = "sap",
+    buildSpeed = 20,
+    
+    -- Defense Wall settings
+    defenseEnabled = false,
+    defenseStructure = "Log Wall",
+    defenseRadius = 6,
+    defenseWallCount = 12,
+    defenseBuildSpeed = 0.1,
+    woodPerWall = 10,
+    
+    -- Shared settings
+    centerX = 0,
+    centerZ = 0,
+    centerY = 0,
+    tilt = 0,
+    previewEnabled = true,
+    skyMode = false,
+    isBuilding = false,
+    pendingPositions = {},
+    maxZoom = 400
+}
 
-    -- Initialize preview folder
-    local previewFolder = workspace:FindFirstChild("BuilderPreview")
-    if previewFolder then previewFolder:Destroy() end
-    previewFolder = Instance.new("Folder")
-    previewFolder.Name = "BuilderPreview"
-    previewFolder.Parent = workspace
+-- Initialize preview folder
+local previewFolder = workspace:FindFirstChild("BuilderPreview")
+if previewFolder then previewFolder:Destroy() end
+previewFolder = Instance.new("Folder")
+previewFolder.Name = "BuilderPreview"
+previewFolder.Parent = workspace
 
-    local connections = {}
-    local isActive = true
-    local resourceButton, requiredButton
+PlantHouseBuilder.previewFolder = previewFolder
+PlantHouseBuilder.connections = {}
+PlantHouseBuilder.isActive = true
 
-    -- Resource tracking functions
-    local function countAvailableLogs()
-        local count = 0
-        local itemsFolder = workspace:FindFirstChild("Items")
+-- Resource tracking functions
+function PlantHouseBuilder.countAvailableItems(itemName)
+    local count = 0
+    local itemsFolder = workspace:FindFirstChild("Items")
+    
+    if itemsFolder then
+        for _, item in pairs(itemsFolder:GetChildren()) do
+            if string.find(string.lower(item.Name), string.lower(itemName)) then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
+function PlantHouseBuilder.getAvailableWood()
+    local success, result = pcall(function()
+        local woodTextLabel = workspace.Map.Campground.CraftingBench.WoodSign.SurfaceGui.TextLabel
+        return tonumber(tostring(woodTextLabel.Text)) or 0
+    end)
+    return success and result or 0
+end
+
+function PlantHouseBuilder.countAvailableLogs()
+    return PlantHouseBuilder.countAvailableItems("Log")
+end
+
+-- Shape definitions
+PlantHouseBuilder.shapes = {
+    circle = function(size, density)
+        local points = {}
+        for i = 0, density - 1 do
+            local angle = (i / density) * 2 * math.pi
+            local x = size * math.cos(angle)
+            local z = size * math.sin(angle)
+            table.insert(points, Vector3.new(x, 0, z))
+        end
+        return points
+    end,
+    
+    square = function(size, density)
+        local points = {}
+        local perimeter = size * 4
+        local spacing = perimeter / density
         
-        if itemsFolder then
-            for _, item in pairs(itemsFolder:GetChildren()) do
-                if item.Name == "Log" then
-                    count = count + 1
+        for i = 0, density - 1 do
+            local distance = i * spacing
+            local x, z
+            
+            if distance <= size then
+                x, z = -size/2 + distance, size/2
+            elseif distance <= size * 2 then
+                x, z = size/2, size/2 - (distance - size)
+            elseif distance <= size * 3 then
+                x, z = size/2 - (distance - size * 2), -size/2
+            else
+                x, z = -size/2, -size/2 + (distance - size * 3)
+            end
+            
+            table.insert(points, Vector3.new(x, 0, z))
+        end
+        return points
+    end,
+    
+    star = function(size, density)
+        local points = {}
+        local outerRadius = size
+        local innerRadius = size * 0.4
+        local numStarPoints = 5
+        local totalPoints = numStarPoints * 2
+        
+        local starVertices = {}
+        for i = 0, totalPoints - 1 do
+            local angle = (i / totalPoints) * 2 * math.pi - math.pi / 2
+            local isOuter = i % 2 == 0
+            local radius = isOuter and outerRadius or innerRadius
+            local x = radius * math.cos(angle)
+            local z = radius * math.sin(angle)
+            table.insert(starVertices, Vector3.new(x, 0, z))
+        end
+        
+        local totalPerimeter = 0
+        local segmentLengths = {}
+        
+        for i = 1, #starVertices do
+            local nextI = (i % #starVertices) + 1
+            local length = (starVertices[nextI] - starVertices[i]).Magnitude
+            table.insert(segmentLengths, length)
+            totalPerimeter = totalPerimeter + length
+        end
+        
+        for i = 0, density - 1 do
+            local targetDistance = (i / density) * totalPerimeter
+            local segmentIndex = 1
+            local accumulatedDistance = 0
+            
+            while segmentIndex <= #segmentLengths and accumulatedDistance + segmentLengths[segmentIndex] < targetDistance do
+                accumulatedDistance = accumulatedDistance + segmentLengths[segmentIndex]
+                segmentIndex = segmentIndex + 1
+            end
+            
+            if segmentIndex <= #segmentLengths then
+                local segmentProgress = (targetDistance - accumulatedDistance) / segmentLengths[segmentIndex]
+                local startVertex = starVertices[segmentIndex]
+                local endVertex = starVertices[(segmentIndex % #starVertices) + 1]
+                
+                local x = startVertex.X + (endVertex.X - startVertex.X) * segmentProgress
+                local z = startVertex.Z + (endVertex.Z - startVertex.Z) * segmentProgress
+                table.insert(points, Vector3.new(x, 0, z))
+            end
+        end
+        
+        return points
+    end,
+    
+    -- DEFENSE WALL SHAPE
+    defense_circle = function(radius, wallCount)
+        local points = {}
+        for i = 1, wallCount do
+            local angle = (i - 1) * (360 / wallCount)
+            local angleRad = math.rad(angle)
+            local xOffset = math.sin(angleRad) * radius
+            local zOffset = math.cos(angleRad) * radius
+            table.insert(points, Vector3.new(xOffset, 0, zOffset))
+        end
+        return points
+    end
+}
+
+-- House definitions
+PlantHouseBuilder.houses = {
+    small_house = function(size)
+        local points = {}
+        local doors = {}
+        local stairs = {}
+        local wallThickness = 2
+        
+        for x = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(x, 0, -size/2))
+            table.insert(points, Vector3.new(x, 0, size/2))
+        end
+        for z = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(-size/2, 0, z))
+            table.insert(points, Vector3.new(size/2, 0, z))
+        end
+        
+        for x = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(x, 6, -size/2))
+            table.insert(points, Vector3.new(x, 6, size/2))
+        end
+        for z = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(-size/2, 6, z))
+            table.insert(points, Vector3.new(size/2, 6, z))
+        end
+        
+        doors = {
+            Vector3.new(-4, 0, size/2), Vector3.new(0, 0, size/2), Vector3.new(4, 0, size/2),
+            Vector3.new(-4, 6, size/2), Vector3.new(0, 6, size/2), Vector3.new(4, 6, size/2)
+        }
+        
+        for i = 1, 3 do
+            table.insert(stairs, Vector3.new(-size/4, (i-1) * 6, -size/4 + i * 4))
+        end
+        
+        local finalPoints = {}
+        for _, wall in pairs(points) do
+            local isDoor = false
+            for _, door in pairs(doors) do
+                if (wall - door).Magnitude < 3 then
+                    isDoor = true
+                    break
+                end
+            end
+            if not isDoor then
+                table.insert(finalPoints, wall)
+            end
+        end
+        
+        for _, stair in pairs(stairs) do
+            table.insert(finalPoints, stair)
+        end
+        
+        return finalPoints
+    end,
+    
+    large_house = function(size)
+        local points = {}
+        local doors = {}
+        local stairs = {}
+        local wallThickness = 2
+        
+        for x = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(x, 0, -size/2))
+            table.insert(points, Vector3.new(x, 0, size/2))
+        end
+        for z = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(-size/2, 0, z))
+            table.insert(points, Vector3.new(size/2, 0, z))
+        end
+        
+        for x = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(x, 6, -size/2))
+            table.insert(points, Vector3.new(x, 6, size/2))
+        end
+        for z = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(-size/2, 6, z))
+            table.insert(points, Vector3.new(size/2, 6, z))
+        end
+        
+        for x = -size/2 + 8, size/2 - 8, wallThickness do
+            if math.abs(x) > 8 then
+                table.insert(points, Vector3.new(x, 0, 0))
+            end
+        end
+        for z = -size/2 + 8, size/2 - 8, wallThickness do
+            if math.abs(z) > 8 then
+                table.insert(points, Vector3.new(0, 0, z))
+            end
+        end
+        
+        doors = {
+            Vector3.new(0, 0, size/2), Vector3.new(0, 6, size/2),
+            Vector3.new(8, 0, 0), Vector3.new(-8, 0, 0)
+        }
+        
+        for i = 1, 3 do
+            table.insert(stairs, Vector3.new(-size/3 + i * 4, (i-1) * 6, -size/3))
+        end
+        
+        local finalPoints = {}
+        for _, wall in pairs(points) do
+            local isDoor = false
+            for _, door in pairs(doors) do
+                if (wall - door).Magnitude < 6 then
+                    isDoor = true
+                    break
+                end
+            end
+            if not isDoor then
+                table.insert(finalPoints, wall)
+            end
+        end
+        
+        for _, stair in pairs(stairs) do
+            table.insert(finalPoints, stair)
+        end
+        
+        return finalPoints
+    end,
+    
+    castle = function(size)
+        local points = {}
+        local doors = {}
+        local stairs = {}
+        local wallThickness = 2
+        
+        for x = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(x, 0, -size/2))
+            table.insert(points, Vector3.new(x, 6, -size/2))
+            table.insert(points, Vector3.new(x, 0, size/2))
+            table.insert(points, Vector3.new(x, 6, size/2))
+        end
+        for z = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(-size/2, 0, z))
+            table.insert(points, Vector3.new(-size/2, 6, z))
+            table.insert(points, Vector3.new(size/2, 0, z))
+            table.insert(points, Vector3.new(size/2, 6, z))
+        end
+        
+        local towerSize = 8
+        local towerPositions = {
+            {-size/2, -size/2}, {size/2, -size/2},
+            {-size/2, size/2}, {size/2, size/2}
+        }
+        
+        for _, pos in pairs(towerPositions) do
+            for x = pos[1] - towerSize, pos[1] + towerSize, wallThickness do
+                for z = pos[2] - towerSize, pos[2] + towerSize, wallThickness do
+                    table.insert(points, Vector3.new(x, 0, z))
+                    table.insert(points, Vector3.new(x, 6, z))
+                    table.insert(points, Vector3.new(x, 12, z))
                 end
             end
         end
-        return count
-    end
-
-    local function getAvailableWood()
-        local woodTextLabel = workspace.Map.Campground.CraftingBench.WoodSign.SurfaceGui.TextLabel
-        local woodText = tostring(woodTextLabel.Text)
-        local woodCount = tonumber(woodText) or 0
-        return woodCount
-    end
-
-    local function updateResourceDisplay()
-        local availableLogs = countAvailableLogs()
-        local availableWood = getAvailableWood()
-        local totalWallsNeeded = Config.numWalls
-        local woodPerWall = Config.woodPerWall
-        local totalWoodNeeded = totalWallsNeeded * woodPerWall
-        local currentTime = os.date("%H:%M:%S")
         
-        if resourceButton then
-            resourceButton:SetTitle("Available Resources")
-            resourceButton:SetDesc("Logs: " .. availableLogs .. " | Wood: " .. availableWood .. " | Updated: " .. currentTime)
-        end
+        doors = {
+            Vector3.new(0, 0, size/2), Vector3.new(-8, 0, size/2), Vector3.new(8, 0, size/2),
+            Vector3.new(0, 6, size/2), Vector3.new(-8, 6, size/2), Vector3.new(8, 6, size/2)
+        }
         
-        if requiredButton then
-            local hasEnoughWood = availableWood >= totalWoodNeeded
-            local status = hasEnoughWood and "✓ READY TO BUILD" or "✗ NEED MORE WOOD"
-            local missingWood = math.max(0, totalWoodNeeded - availableWood)
-            
-            local desc = "Building " .. totalWallsNeeded .. " walls × " .. woodPerWall .. " wood each\n"
-            desc = desc .. status
-            if missingWood > 0 then
-                desc = desc .. " • Missing: " .. missingWood .. " wood"
-                local logsNeededForWood = math.ceil(missingWood / 5)
-                desc = desc .. "\n(Need ~" .. logsNeededForWood .. " more logs to craft missing wood)"
-            else
-                desc = desc .. " • You have enough wood!"
+        for _, towerPos in pairs(towerPositions) do
+            for i = 1, 5 do
+                local angle = (i-1) * 0.8
+                local x = towerPos[1] + 4 * math.cos(angle)
+                local z = towerPos[2] + 4 * math.sin(angle)
+                table.insert(stairs, Vector3.new(x, (i-1) * 6, z))
             end
-            
-            requiredButton:SetTitle("Required: " .. totalWoodNeeded .. " wood total")
-            requiredButton:SetDesc(desc)
         end
+        
+        local finalPoints = {}
+        for _, wall in pairs(points) do
+            local isDoor = false
+            for _, door in pairs(doors) do
+                if (wall - door).Magnitude < 8 then
+                    isDoor = true
+                    break
+                end
+            end
+            if not isDoor then
+                table.insert(finalPoints, wall)
+            end
+        end
+        
+        for _, stair in pairs(stairs) do
+            table.insert(finalPoints, stair)
+        end
+        
+        return finalPoints
+    end,
+    
+    fortress = function(size)
+        local points = {}
+        local wallThickness = 2
+        
+        for x = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(x, 0, -size/2))
+            table.insert(points, Vector3.new(x, 6, -size/2))
+            table.insert(points, Vector3.new(x, 0, size/2))
+            table.insert(points, Vector3.new(x, 6, size/2))
+        end
+        
+        for z = -size/2, size/2, wallThickness do
+            table.insert(points, Vector3.new(-size/2, 0, z))
+            table.insert(points, Vector3.new(-size/2, 6, z))
+            table.insert(points, Vector3.new(size/2, 0, z))
+            table.insert(points, Vector3.new(size/2, 6, z))
+        end
+        
+        for x = -size/2 + 12, size/2 - 12, wallThickness do
+            table.insert(points, Vector3.new(x, 0, -size/2 + 12))
+            table.insert(points, Vector3.new(x, 6, -size/2 + 12))
+            if math.abs(x) > 16 then
+                table.insert(points, Vector3.new(x, 0, size/2 - 12))
+                table.insert(points, Vector3.new(x, 6, size/2 - 12))
+            end
+        end
+        
+        for z = -size/2 + 12, size/2 - 12, wallThickness do
+            table.insert(points, Vector3.new(-size/2 + 12, 0, z))
+            table.insert(points, Vector3.new(-size/2 + 12, 6, z))
+            table.insert(points, Vector3.new(size/2 - 12, 0, z))
+            table.insert(points, Vector3.new(size/2 - 12, 6, z))
+        end
+        
+        local towerPositions = {
+            {-size/3, -size/3}, {size/3, -size/3},
+            {-size/3, size/3}, {size/3, size/3},
+            {0, -size/2}, {0, size/2}
+        }
+        
+        for _, pos in pairs(towerPositions) do
+            table.insert(points, Vector3.new(pos[1], 0, pos[2]))
+            table.insert(points, Vector3.new(pos[1], 6, pos[2]))
+            table.insert(points, Vector3.new(pos[1], 12, pos[2]))
+        end
+        
+        table.insert(points, Vector3.new(0, 0, 0))
+        table.insert(points, Vector3.new(0, 6, 0))
+        table.insert(points, Vector3.new(0, 12, 0))
+        table.insert(points, Vector3.new(0, 18, 0))
+        
+        for i = 1, 3 do
+            table.insert(points, Vector3.new(-8 * i, (i-1) * 6, size/2 + 8))
+        end
+        
+        return points
     end
+}
 
-    -- Preview Functions
-    local function createPreviewPoint(position, color)
-        local part = Instance.new("Part")
-        part.Name = "PreviewPoint"
-        part.Size = Vector3.new(3, 12, 3)
-        part.Position = position
-        part.Material = Enum.Material.Neon
-        part.Color = color
-        part.Anchored = true
-        part.CanCollide = false
-        part.Transparency = 0.2
-        part.Parent = previewFolder
-        
-        return part
+-- Utility functions
+function PlantHouseBuilder.applyTilt(points, tilt)
+    if tilt == 0 then return points end
+    
+    local tiltedPoints = {}
+    local cos_t = math.cos(math.rad(tilt))
+    local sin_t = math.sin(math.rad(tilt))
+    
+    for _, point in pairs(points) do
+        local x, y, z = point.X, point.Y, point.Z
+        local newY = y * cos_t - z * sin_t
+        local newZ = y * sin_t + z * cos_t
+        table.insert(tiltedPoints, Vector3.new(x, newY, newZ))
     end
+    
+    return tiltedPoints
+end
 
-    local function applyTilt(points, tilt)
-        if tilt == 0 then return points end
-        
-        local tiltedPoints = {}
-        local cos_t = math.cos(math.rad(tilt))
-        local sin_t = math.sin(math.rad(tilt))
-        
+function PlantHouseBuilder.createPreviewPoint(position, color)
+    local part = Instance.new("Part")
+    part.Name = "PreviewPoint"
+    part.Size = Vector3.new(3, 12, 3)
+    
+    local yPos = PlantHouseBuilder.config.skyMode and 100 or 6
+    part.Position = Vector3.new(
+        position.X + PlantHouseBuilder.config.centerX,
+        yPos + position.Y + PlantHouseBuilder.config.centerY,
+        position.Z + PlantHouseBuilder.config.centerZ
+    )
+    
+    part.Material = Enum.Material.Neon
+    part.Color = color
+    part.Anchored = true
+    part.CanCollide = false
+    part.Transparency = 0.2
+    part.Parent = PlantHouseBuilder.previewFolder
+    
+    return part
+end
+
+function PlantHouseBuilder.updatePreview()
+    if not PlantHouseBuilder.config.previewEnabled then
+        for _, child in pairs(PlantHouseBuilder.previewFolder:GetChildren()) do
+            child:Destroy()
+        end
+        return
+    end
+    
+    PlantHouseBuilder.previewFolder:ClearAllChildren()
+    
+    local allPoints = {}
+    
+    -- Plant shapes
+    if PlantHouseBuilder.config.plantShape ~= "none" and PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape] then
+        local points = PlantHouseBuilder.shapes[PlantHouseBuilder.config.plantShape](PlantHouseBuilder.config.size, PlantHouseBuilder.config.density)
+        points = PlantHouseBuilder.applyTilt(points, PlantHouseBuilder.config.tilt)
         for _, point in pairs(points) do
-            local x, y, z = point.X, point.Y, point.Z
-            local newY = y * cos_t - z * sin_t
-            local newZ = y * sin_t + z * cos_t
-            table.insert(tiltedPoints, Vector3.new(x, newY, newZ))
+            table.insert(allPoints, {point, Color3.fromRGB(255, 50, 50)})
         end
-        
-        return tiltedPoints
     end
-
-    local function getCenterPosition()
-        local char = player.Character
-        if not char or not char:FindFirstChild("HumanoidRootPart") then
-            return CFrame.new(Config.centerX, Config.centerY, Config.centerZ)
+    
+    -- Houses
+    if PlantHouseBuilder.config.houseType ~= "none" and PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType] then
+        local points = PlantHouseBuilder.houses[PlantHouseBuilder.config.houseType](PlantHouseBuilder.config.size)
+        points = PlantHouseBuilder.applyTilt(points, PlantHouseBuilder.config.tilt)
+        for _, point in pairs(points) do
+            local isStair = point.Y > 0
+            local color = isStair and Color3.fromRGB(255, 150, 0) or Color3.fromRGB(255, 100, 150)
+            table.insert(allPoints, {point, color})
         end
-        
-        local root = char.HumanoidRootPart
-        
-        if Config.centerX ~= 0 or Config.centerZ ~= 0 then
-            return CFrame.new(Config.centerX, root.Position.Y + Config.centerY, Config.centerZ)
-        end
-        
-        return root.CFrame * CFrame.new(0, Config.centerY, 0)
     end
-
-    local function calculateWallPositions()
-        local centerCFrame = getCenterPosition()
-        local positions = {}
-        
-        local groundY
-        if Config.skyMode then
-            groundY = 100
-        else
-            local terrainPos = centerCFrame.Position
-            local rayOrigin = Vector3.new(terrainPos.X, 500, terrainPos.Z)
-            local rayDirection = Vector3.new(0, -1000, 0)
-            
-            local raycastParams = RaycastParams.new()
-            raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-            raycastParams.FilterDescendantsInstances = {previewFolder, player.Character}
-            
-            local rayResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
-            
-            if rayResult then
-                groundY = rayResult.Position.Y
-            else
-                groundY = terrainPos.Y
-            end
+    
+    -- Defense walls
+    if PlantHouseBuilder.config.defenseEnabled then
+        local points = PlantHouseBuilder.shapes.defense_circle(PlantHouseBuilder.config.defenseRadius, PlantHouseBuilder.config.defenseWallCount)
+        points = PlantHouseBuilder.applyTilt(points, PlantHouseBuilder.config.tilt)
+        for _, point in pairs(points) do
+            table.insert(allPoints, {point, Color3.fromRGB(100, 255, 100)})
         end
-        
-        for i = 1, Config.numWalls do
-            local angle = (i - 1) * (360 / Config.numWalls)
-            local angleRad = math.rad(angle)
-            
-            local xOffset = math.sin(angleRad) * Config.radius
-            local zOffset = math.cos(angleRad) * Config.radius
-            
-            local position = Vector3.new(
-                centerCFrame.Position.X + xOffset,
-                groundY + Config.centerY,
-                centerCFrame.Position.Z + zOffset
-            )
-            
-            if Config.tilt ~= 0 then
-                local relativePos = position - centerCFrame.Position
-                local tiltedPoints = applyTilt({relativePos}, Config.tilt)
-                position = centerCFrame.Position + tiltedPoints[1]
-            end
-            
-            table.insert(positions, position)
-        end
-        
-        return positions
     end
+    
+    for _, pointData in pairs(allPoints) do
+        PlantHouseBuilder.createPreviewPoint(pointData[1], pointData[2])
+    end
+end
 
-    local function updatePreview()
-        if not Config.previewEnabled then
-            for _, child in pairs(previewFolder:GetChildren()) do
-                child:Destroy()
-            end
+-- Plant building function
+function PlantHouseBuilder.buildAtPositions(points)
+    if PlantHouseBuilder.config.isBuilding or not PlantHouseBuilder.isActive then return end
+    
+    PlantHouseBuilder.config.isBuilding = true
+    PlantHouseBuilder.config.pendingPositions = {}
+    
+    points = PlantHouseBuilder.applyTilt(points, PlantHouseBuilder.config.tilt)
+    for _, point in pairs(points) do
+        local yPos = PlantHouseBuilder.config.skyMode and 100 or 0
+        local finalPosition = Vector3.new(
+            point.X + PlantHouseBuilder.config.centerX,
+            yPos + point.Y + PlantHouseBuilder.config.centerY,
+            point.Z + PlantHouseBuilder.config.centerZ
+        )
+        table.insert(PlantHouseBuilder.config.pendingPositions, finalPosition)
+    end
+    
+    local function tryBuildNext()
+        if #PlantHouseBuilder.config.pendingPositions == 0 or not PlantHouseBuilder.isActive then
+            PlantHouseBuilder.config.isBuilding = false
             return
         end
         
-        previewFolder:ClearAllChildren()
+        local position = table.remove(PlantHouseBuilder.config.pendingPositions, 1)
         
-        local positions = calculateWallPositions()
-        
-        for _, position in pairs(positions) do
-            createPreviewPoint(position, Color3.fromRGB(255, 100, 150))
+        local itemsFolder = workspace:FindFirstChild("Items")
+        if itemsFolder then
+            for _, item in pairs(itemsFolder:GetChildren()) do
+                if string.find(string.lower(item.Name), string.lower(PlantHouseBuilder.config.itemFilter)) then
+                    local remoteEvents = ReplicatedStorage:FindFirstChild("RemoteEvents")
+                    if remoteEvents and remoteEvents:FindFirstChild("RequestPlantItem") then
+                        pcall(function()
+                            remoteEvents.RequestPlantItem:InvokeServer(item, position)
+                        end)
+                        break
+                    end
+                end
+            end
         end
+        
+        task.wait(1 / PlantHouseBuilder.config.buildSpeed)
+        tryBuildNext()
     end
+    
+    tryBuildNext()
+end
 
+-- DEFENSE WALL BUILDING FUNCTION
+function PlantHouseBuilder.buildDefenseWalls()
+    if PlantHouseBuilder.config.isBuilding or not PlantHouseBuilder.isActive then 
+        return false, "Already building"
+    end
+    
+    local availableWood = PlantHouseBuilder.getAvailableWood()
+    local neededWood = PlantHouseBuilder.config.defenseWallCount * PlantHouseBuilder.config.woodPerWall
+    
+    if availableWood < neededWood then
+        return false, "Not enough wood. Need " .. (neededWood - availableWood) .. " more"
+    end
+    
+    PlantHouseBuilder.config.isBuilding = true
+    
+    local CraftItem = ReplicatedStorage:FindFirstChild("RemoteEvents"):FindFirstChild("CraftItem")
+    local RequestPlaceStructure = ReplicatedStorage:FindFirstChild("RemoteEvents"):FindFirstChild("RequestPlaceStructure")
+    local ClassStatUpdated = ReplicatedStorage:FindFirstChild("RemoteEvents"):FindFirstChild("ClassStatUpdated")
+    local inventory = player:WaitForChild("Inventory")
+    
     local function getLatestInventoryItem()
         local items = inventory:GetChildren()
         if #items == 0 then return nil end
         return items[#items]
     end
-
-    local function buildStructure(name, teleportToStructure)
-        local char = player.Character or player.CharacterAdded:Wait()
-        local root = char:WaitForChild("HumanoidRootPart")
+    
+    local function getCenterCFrame()
+        local char = player.Character
+        if not char or not char:FindFirstChild("HumanoidRootPart") then
+            return CFrame.new(PlantHouseBuilder.config.centerX, PlantHouseBuilder.config.centerY, PlantHouseBuilder.config.centerZ)
+        end
         
-        CraftItem:InvokeServer(name)
+        local root = char.HumanoidRootPart
+        if PlantHouseBuilder.config.centerX ~= 0 or PlantHouseBuilder.config.centerZ ~= 0 then
+            return CFrame.new(PlantHouseBuilder.config.centerX, root.Position.Y + PlantHouseBuilder.config.centerY, PlantHouseBuilder.config.centerZ)
+        end
+        
+        return root.CFrame * CFrame.new(0, PlantHouseBuilder.config.centerY, 0)
+    end
+    
+    local centerCFrame = getCenterCFrame()
+    local positions = PlantHouseBuilder.shapes.defense_circle(PlantHouseBuilder.config.defenseRadius, PlantHouseBuilder.config.defenseWallCount)
+    positions = PlantHouseBuilder.applyTilt(positions, PlantHouseBuilder.config.tilt)
+    
+    local groundY = PlantHouseBuilder.config.skyMode and 100 or centerCFrame.Position.Y
+    
+    for i, position in ipairs(positions) do
+        if not PlantHouseBuilder.config.isBuilding then break end
+        
+        CraftItem:InvokeServer(PlantHouseBuilder.config.defenseStructure)
         task.wait(0.2)
         
         local structureItem = getLatestInventoryItem()
         if not structureItem then
-            warn("No structure item found in inventory for "..name)
-            return
+            warn("No structure item found")
+            continue
         end
         
-        local placeCFrame = root.CFrame * CFrame.new(0, 0, -5)
-        local pos = placeCFrame.Position
+        local finalPos = Vector3.new(
+            position.X + PlantHouseBuilder.config.centerX,
+            groundY + position.Y + PlantHouseBuilder.config.centerY,
+            position.Z + PlantHouseBuilder.config.centerZ
+        )
+        
+        local centerPos = centerCFrame.Position
+        local lookDirection = (centerPos - finalPos).Unit
+        local rightVector = Vector3.new(0, 1, 0):Cross(lookDirection)
+        local upVector = lookDirection:Cross(rightVector)
+        local wallCFrame = CFrame.fromMatrix(finalPos, rightVector, upVector, lookDirection)
         
         local args = {
             structureItem,
-            {
-                Valid = true,
-                CFrame = placeCFrame,
-                Position = pos
-            },
-            placeCFrame
+            {Valid = true, CFrame = wallCFrame, Position = finalPos},
+            wallCFrame
         }
         
         RequestPlaceStructure:InvokeServer(unpack(args))
-        firesignal(ClassStatUpdated.OnClientEvent, "Blacksmith", "BuildStructures", 13, 1)
-        
-        if teleportToStructure then
-            task.wait(0.5)
-            root.CFrame = placeCFrame * CFrame.new(0, 0, 3)
-        end
+        task.wait(PlantHouseBuilder.config.defenseBuildSpeed)
     end
-
-    local function surroundCharacter(structureName)
-        if Config.isBuilding then
-            WindUI:Notify({
-                Title = "Already Building",
-                Content = "Please wait for current build to finish",
-                Icon = "alert-circle",
-                Duration = 3
-            })
-            return
-        end
-        
-        local availableWood = getAvailableWood()
-        local neededWood = Config.numWalls * Config.woodPerWall
-        
-        if availableWood < neededWood then
-            WindUI:Notify({
-                Title = "Not Enough Wood!",
-                Content = "Need " .. (neededWood - availableWood) .. " more wood",
-                Icon = "x-circle",
-                Duration = 5
-            })
-            return
-        end
-        
-        Config.isBuilding = true
-        
-        local centerCFrame = getCenterPosition()
-        
-        WindUI:Notify({
-            Title = "Building Started",
-            Content = "Placing " .. Config.numWalls .. " walls",
-            Icon = "hammer",
-            Duration = 2
-        })
-        
-        local positions = calculateWallPositions()
-        
-        for i, position in ipairs(positions) do
-            if not Config.isBuilding then break end
-            
-            CraftItem:InvokeServer(structureName)
-            task.wait(0.2)
-            
-            local structureItem = getLatestInventoryItem()
-            if not structureItem then
-                warn("No structure item found for " .. structureName)
-                continue
-            end
-            
-            local centerPos = centerCFrame.Position
-            local lookDirection = (centerPos - position).Unit
-            local rightVector = Vector3.new(0, 1, 0):Cross(lookDirection)
-            local upVector = lookDirection:Cross(rightVector)
-            
-            local wallCFrame = CFrame.fromMatrix(position, rightVector, upVector, lookDirection)
-            
-            local args = {
-                structureItem,
-                {
-                    Valid = true,
-                    CFrame = wallCFrame,
-                    Position = position
-                },
-                wallCFrame
-            }
-            
-            RequestPlaceStructure:InvokeServer(unpack(args))
-            task.wait(Config.buildSpeed)
-        end
-        
-        firesignal(ClassStatUpdated.OnClientEvent, "Blacksmith", "BuildStructures", 13, Config.numWalls)
-        Config.isBuilding = false
-        
-        updateResourceDisplay()
-        
-        WindUI:Notify({
-            Title = "Building Complete!",
-            Content = "Placed " .. Config.numWalls .. " walls",
-            Icon = "check-circle",
-            Duration = 3
-        })
-    end
-
-    -- Return functions and config for UI setup
-    return {
-        Config = Config,
-        updateResourceDisplay = updateResourceDisplay,
-        updatePreview = updatePreview,
-        buildStructure = buildStructure,
-        surroundCharacter = surroundCharacter,
-        previewFolder = previewFolder,
-        connections = connections,
-        isActive = isActive,
-        setResourceButton = function(btn) resourceButton = btn end,
-        setRequiredButton = function(btn) requiredButton = btn end,
-        setIsActive = function(val) isActive = val end,
-        player = player
-    }
+    
+    firesignal(ClassStatUpdated.OnClientEvent, "Blacksmith", "BuildStructures", 13, PlantHouseBuilder.config.defenseWallCount)
+    PlantHouseBuilder.config.isBuilding = false
+    
+    return true, "Defense walls built successfully"
 end
 
-return LogWallBuilderModule
+function PlantHouseBuilder.cleanup()
+    PlantHouseBuilder.isActive = false
+    PlantHouseBuilder.config.isBuilding = false
+    PlantHouseBuilder.config.pendingPositions = {}
+    
+    for _, connection in pairs(PlantHouseBuilder.connections) do
+        connection:Disconnect()
+    end
+    
+    if PlantHouseBuilder.previewFolder then
+        PlantHouseBuilder.previewFolder:Destroy()
+    end
+end
+
+return PlantHouseBuilder
