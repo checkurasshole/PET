@@ -1,4 +1,4 @@
--- Log Wall Builder Module
+-- Log Wall Builder Module - FIXED TRUE PREVIEW
 -- This is the module script to upload to GitHub
 
 local WallBuilderModule = {}
@@ -33,7 +33,8 @@ function WallBuilderModule.new(WindUI)
         centerY = 0,
         tilt = 0,
         maxZoom = 400,
-        woodPerWall = 10
+        woodPerWall = 10,
+        useAbsolutePosition = true  -- NEW: Use absolute positioning
     }
     
     -- Initialize preview folder with unique name
@@ -46,6 +47,9 @@ function WallBuilderModule.new(WindUI)
     local connections = {}
     local isActive = true
     local resourceButton, requiredButton
+    
+    -- Store the FIXED center position when preview is updated
+    local fixedCenterPosition = nil
     
     -- Resource tracking functions
     function self.countAvailableLogs()
@@ -103,10 +107,10 @@ function WallBuilderModule.new(WindUI)
     end
     
     -- Preview Functions - NEW DESIGN
-    function self.createPreviewPoint(position, color)
+    function self.createPreviewPoint(position, index)
         -- Create main cylinder marker
         local cylinder = Instance.new("Part")
-        cylinder.Name = "WallPreviewMarker"
+        cylinder.Name = "WallPreviewMarker_" .. index
         cylinder.Size = Vector3.new(2, 14, 2)
         cylinder.Position = position
         cylinder.Material = Enum.Material.ForceField
@@ -168,6 +172,23 @@ function WallBuilderModule.new(WindUI)
         sphere.Transparency = 0.5
         sphere.Parent = previewFolder
         
+        -- Add number label
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "NumberLabel"
+        billboard.Size = UDim2.new(0, 50, 0, 50)
+        billboard.StudsOffset = Vector3.new(0, 10, 0)
+        billboard.AlwaysOnTop = true
+        billboard.Parent = cylinder
+        
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = tostring(index)
+        label.TextColor3 = Color3.new(1, 1, 1)
+        label.TextScaled = true
+        label.Font = Enum.Font.GothamBold
+        label.Parent = billboard
+        
         -- Animate the rings
         spawn(function()
             local rotation = 0
@@ -179,7 +200,6 @@ function WallBuilderModule.new(WindUI)
                 if ring2 and ring2.Parent then
                     ring2.Orientation = Vector3.new(0, -rotation * 1.5, 90)
                 end
-                -- Pulse the sphere
                 if sphere and sphere.Parent then
                     local pulse = 0.5 + math.sin(rotation * 0.1) * 0.2
                     sphere.Transparency = pulse
@@ -208,32 +228,29 @@ function WallBuilderModule.new(WindUI)
         return tiltedPoints
     end
     
-    function self.getCenterPosition()
+    -- Get the CENTER position for building
+    function self.getAbsoluteCenterPosition()
         local char = player.Character
         if not char or not char:FindFirstChild("HumanoidRootPart") then
-            return CFrame.new(self.Config.centerX, self.Config.centerY, self.Config.centerZ)
+            return Vector3.new(self.Config.centerX, self.Config.centerY, self.Config.centerZ)
         end
         
         local root = char.HumanoidRootPart
         
+        -- If custom position is set (not 0,0,0), use it absolutely
         if self.Config.centerX ~= 0 or self.Config.centerZ ~= 0 then
-            return CFrame.new(self.Config.centerX, root.Position.Y + self.Config.centerY, self.Config.centerZ)
+            local yPos = self.Config.skyMode and 100 or (root.Position.Y + self.Config.centerY)
+            return Vector3.new(self.Config.centerX, yPos, self.Config.centerZ)
         end
         
-        return root.CFrame * CFrame.new(0, self.Config.centerY, 0)
+        -- Otherwise use player's current position
+        local yPos = self.Config.skyMode and 100 or (root.Position.Y + self.Config.centerY)
+        return Vector3.new(root.Position.X, yPos, root.Position.Z)
     end
     
-    function self.calculateWallPositions()
-        local centerCFrame = self.getCenterPosition()
+    -- Calculate where walls will ACTUALLY be placed
+    function self.calculateActualWallPositions(centerPos)
         local positions = {}
-        
-        -- Get the base Y position from center
-        local baseY = centerCFrame.Position.Y
-        
-        -- If sky mode, override to 100
-        if self.Config.skyMode then
-            baseY = 100
-        end
         
         for i = 1, self.Config.numWalls do
             local angle = (i - 1) * (360 / self.Config.numWalls)
@@ -243,15 +260,15 @@ function WallBuilderModule.new(WindUI)
             local zOffset = math.cos(angleRad) * self.Config.radius
             
             local position = Vector3.new(
-                centerCFrame.Position.X + xOffset,
-                baseY + self.Config.centerY,
-                centerCFrame.Position.Z + zOffset
+                centerPos.X + xOffset,
+                centerPos.Y,
+                centerPos.Z + zOffset
             )
             
             if self.Config.tilt ~= 0 then
-                local relativePos = position - centerCFrame.Position
+                local relativePos = position - centerPos
                 local tiltedPoints = self.applyTilt({relativePos}, self.Config.tilt)
-                position = centerCFrame.Position + tiltedPoints[1]
+                position = centerPos + tiltedPoints[1]
             end
             
             table.insert(positions, position)
@@ -265,57 +282,69 @@ function WallBuilderModule.new(WindUI)
             for _, child in pairs(previewFolder:GetChildren()) do
                 child:Destroy()
             end
+            fixedCenterPosition = nil
             return
         end
         
         previewFolder:ClearAllChildren()
         
-        local positions = self.calculateWallPositions()
+        -- Store the center position when preview is created
+        fixedCenterPosition = self.getAbsoluteCenterPosition()
+        
+        -- Calculate exact positions where walls will be placed
+        local positions = self.calculateActualWallPositions(fixedCenterPosition)
         
         -- Create markers at each position
         for i, position in pairs(positions) do
-            -- Alternate colors for variety
-            local colorVariant = i % 3
-            local color = Color3.fromRGB(255, 100, 150)
-            if colorVariant == 0 then
-                color = Color3.fromRGB(100, 200, 255)
-            elseif colorVariant == 1 then
-                color = Color3.fromRGB(150, 255, 150)
-            end
-            self.createPreviewPoint(position, color)
+            self.createPreviewPoint(position, i)
         end
         
         -- Add center marker
-        local centerPos = self.getCenterPosition().Position
         local centerMarker = Instance.new("Part")
         centerMarker.Name = "CenterMarker"
         centerMarker.Size = Vector3.new(4, 1, 4)
-        centerMarker.Position = centerPos
+        centerMarker.Position = fixedCenterPosition
         centerMarker.Material = Enum.Material.Neon
-        centerMarker.Color = Color3.fromRGB(255, 255, 0)
+        centerMarker.Color = Color3.fromRGB(255, 0, 0)
         centerMarker.Anchored = true
         centerMarker.CanCollide = false
-        centerMarker.Transparency = 0.5
+        centerMarker.Transparency = 0.3
         centerMarker.Shape = Enum.PartType.Cylinder
         centerMarker.Orientation = Vector3.new(0, 0, 90)
         centerMarker.Parent = previewFolder
         
+        -- Add label to center
+        local centerBillboard = Instance.new("BillboardGui")
+        centerBillboard.Size = UDim2.new(0, 100, 0, 50)
+        centerBillboard.StudsOffset = Vector3.new(0, 3, 0)
+        centerBillboard.AlwaysOnTop = true
+        centerBillboard.Parent = centerMarker
+        
+        local centerLabel = Instance.new("TextLabel")
+        centerLabel.Size = UDim2.new(1, 0, 1, 0)
+        centerLabel.BackgroundTransparency = 1
+        centerLabel.Text = "BUILD CENTER"
+        centerLabel.TextColor3 = Color3.new(1, 0, 0)
+        centerLabel.TextScaled = true
+        centerLabel.Font = Enum.Font.GothamBold
+        centerLabel.Parent = centerBillboard
+        
         -- Add radius circle outline
-        for i = 1, 32 do
-            local angle = (i - 1) * (360 / 32)
+        for i = 1, 64 do
+            local angle = (i - 1) * (360 / 64)
             local angleRad = math.rad(angle)
             local xOff = math.sin(angleRad) * self.Config.radius
             local zOff = math.cos(angleRad) * self.Config.radius
             
             local dot = Instance.new("Part")
             dot.Name = "RadiusOutline"
-            dot.Size = Vector3.new(1, 0.5, 1)
-            dot.Position = centerPos + Vector3.new(xOff, 0, zOff)
+            dot.Size = Vector3.new(0.8, 0.3, 0.8)
+            dot.Position = fixedCenterPosition + Vector3.new(xOff, 0, zOff)
             dot.Material = Enum.Material.Neon
-            dot.Color = Color3.fromRGB(255, 255, 100)
+            dot.Color = Color3.fromRGB(255, 255, 0)
             dot.Anchored = true
             dot.CanCollide = false
-            dot.Transparency = 0.7
+            dot.Transparency = 0.6
             dot.Shape = Enum.PartType.Ball
             dot.Parent = previewFolder
         end
@@ -388,16 +417,18 @@ function WallBuilderModule.new(WindUI)
         
         self.Config.isBuilding = true
         
-        local centerCFrame = self.getCenterPosition()
+        -- Use the FIXED center position from preview, or calculate new one
+        local buildCenterPosition = fixedCenterPosition or self.getAbsoluteCenterPosition()
         
         WindUI:Notify({
             Title = "Building Started",
-            Content = "Placing " .. self.Config.numWalls .. " walls",
+            Content = "Placing " .. self.Config.numWalls .. " walls at fixed positions",
             Icon = "hammer",
             Duration = 2
         })
         
-        local positions = self.calculateWallPositions()
+        -- Calculate positions using the FIXED center
+        local positions = self.calculateActualWallPositions(buildCenterPosition)
         local placedCount = 0
         local failedCount = 0
         
@@ -425,8 +456,8 @@ function WallBuilderModule.new(WindUI)
                 continue
             end
             
-            local centerPos = centerCFrame.Position
-            local lookDirection = (centerPos - position).Unit
+            -- Rotate wall to face inward toward center
+            local lookDirection = (buildCenterPosition - position).Unit
             local rightVector = Vector3.new(0, 1, 0):Cross(lookDirection)
             local upVector = lookDirection:Cross(rightVector)
             
@@ -490,7 +521,7 @@ function WallBuilderModule.new(WindUI)
         })
         
         Window:Tag({
-            Title = "v2.3",
+            Title = "v3.0 FIXED",
             Color = Color3.fromHex("#30ff6a"),
             Radius = 5
         })
@@ -691,7 +722,7 @@ function WallBuilderModule.new(WindUI)
         
         MainTab:Toggle({
             Title = "Sky Mode",
-            Desc = "Build at high altitude",
+            Desc = "Build at high altitude (Y=100)",
             Value = self.Config.skyMode,
             Callback = function(state)
                 self.Config.skyMode = state
@@ -711,9 +742,10 @@ function WallBuilderModule.new(WindUI)
         MainTab:Space()
         
         MainTab:Button({
-            Title = "Use Player Position",
-            Desc = "Set center to current location",
+            Title = "🎯 Lock Preview Position",
+            Desc = "Set center to current location & lock it",
             Icon = "map-pin",
+            Color = Color3.fromHex("#ff9800"),
             Callback = function()
                 if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                     local pos = player.Character.HumanoidRootPart.Position
@@ -722,8 +754,8 @@ function WallBuilderModule.new(WindUI)
                     self.updatePreview()
                     
                     WindUI:Notify({
-                        Title = "Position Updated",
-                        Content = "Set to player position",
+                        Title = "Position Locked!",
+                        Content = "Build center locked at current position",
                         Icon = "map-pin",
                         Duration = 2
                     })
@@ -737,6 +769,7 @@ function WallBuilderModule.new(WindUI)
             Icon = "trash-2",
             Callback = function()
                 previewFolder:ClearAllChildren()
+                fixedCenterPosition = nil
                 WindUI:Notify({
                     Title = "Preview Cleared",
                     Content = "",
@@ -783,8 +816,8 @@ function WallBuilderModule.new(WindUI)
         MainTab:Space()
         
         MainTab:Button({
-            Title = "BUILD CIRCLE AROUND CHARACTER",
-            Desc = "Place walls in circle formation",
+            Title = "🔨 BUILD AT PREVIEW POSITIONS",
+            Desc = "Build walls exactly where preview shows",
             Icon = "circle",
             Color = Color3.fromHex("#30ff6a"),
             Callback = function()
@@ -828,7 +861,7 @@ function WallBuilderModule.new(WindUI)
         
         WindUI:Notify({
             Title = "Script Loaded!",
-            Content = "Log Wall Builder Pro is ready",
+            Content = "TRUE PREVIEW - Walls build exactly where shown!",
             Icon = "check-circle",
             Duration = 3
         })
