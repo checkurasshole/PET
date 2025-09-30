@@ -1,343 +1,1472 @@
-local LogWallBuilderModule = {}
+local Module = {}
 
--- Services & Remotes
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local player = Players.LocalPlayer
-
--- Configuration
-LogWallBuilderModule.Config = {
-    structureName = "Log Wall",
-    radius = 199,
-    numWalls = 199,
-    buildSpeed = 0,
-    isBuilding = false,
-    isPaused = false,
-    previewEnabled = true,
-    maxZoom = 400,
-    woodPerWall = 10,
-    verificationDelay = 0.2
+-- Services
+Module.Services = {
+    Players = game:GetService("Players"),
+    TweenService = game:GetService("TweenService"),
+    ReplicatedStorage = game:GetService("ReplicatedStorage"),
+    RunService = game:GetService("RunService"),
+    PathfindingService = game:GetService("PathfindingService"),
+    CollectionService = game:GetService("CollectionService"),
+    Lighting = game:GetService("Lighting"),
+    TeleportService = game:GetService("TeleportService"),
+    Workspace = game:GetService("Workspace")
 }
 
--- Module state
-local previewFolder
-local connections = {}
-local isActive = true
-local structuresFolder
-local mainFire
-local inventory
-local CraftItem
-local RequestPlaceStructure
+local LocalPlayer = Module.Services.Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+local Humanoid = Character:WaitForChild("Humanoid")
+local Items = workspace:WaitForChild("Items")
+local Inventory = LocalPlayer:WaitForChild("Inventory")
 
-function LogWallBuilderModule:Initialize()
-    -- Initialize services
-    CraftItem = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("CraftItem")
-    RequestPlaceStructure = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("RequestPlaceStructure")
-    inventory = player:WaitForChild("Inventory")
-    structuresFolder = workspace:WaitForChild("Structures")
-    mainFire = workspace.Map.Campground.MainFire.OuterTouchZone
+local itemDrag = require(LocalPlayer.PlayerScripts.Client.InteractionHandler).Interactions.Item
+
+-- Global Variables
+Module.Vars = {
+    mapUnlockVisitedParts = {},
+    stopMapUnlocking = false,
+    MAP_UNLOCK_ENABLED = false,
+    CHILDREN_COLLECTION_ENABLED = false,
+    fullBrightEnabled = false,
+    espEnabled = false,
+    espConnections = {},
+    BRING_SPEED = 0.05,
+    ITEM_HEIGHT = 3,
+    SCATTER_ENABLED = true,
+    AUTO_COOK_ENABLED = false,
+    TELEPORT_TO_PLAYER_AFTER = false,
+    AUTO_EAT_ENABLED = false,
+    SELECTED_FOOD_TO_EAT = "All Food",
+    AUTO_COLLECT_COINS_ENABLED = false,
+    COIN_COLLECTION_METHOD = "Get Coins Instant",
+    DIAMOND_CHEST_DETECTION = true,
+    selectedTreeType = "smalltree",
+    treeBigLimit = 50,
+    treeMarkers = {},
+    currentEquippedItem = "None",
+    collectingActive = false,
+    autoLootEnabled = false,
+    selectedPlayer = "Me",
+    HEIGHT_OFFSET = 10,
+    SCATTER_RANGE = 5,
+    POSITION_MODE = "OuterTouchZone"
+}
+
+-- Item Categories
+Module.Categories = {
+    FUEL_ITEMS = {"Log", "Chair", "Fuel Canister", "Oil Barrel", "Biofuel", "Coal", "Chainsaw"},
+    GEAR_ITEMS = {
+        "Bolt", "Sheet Metal", "UFO Junk", "UFO Component", "Broken Fan", "Broken Radio", 
+        "Broken Microwave", "Tyre", "Metal Chair", "Old Car Engine", "Washing Machine", 
+        "Cultist Experiment", "Cultist Prototype", "UFO Scrap", "Old Flashlight", "Old Radio", 
+        "Old Rod", "Strong Axe", "Iron Body", "Leather Body", "Lava Mine Blueprint"
+    },
+    FOOD_ITEMS = {
+        "Carrot", "Morsel", "Bandage", "Medkit", "Cooked Morsel", "Steak", "Cooked Steak", 
+        "Berry", "Apple", "Pumpkin", "Cake", "Stew", "Hearty Stew", "Chili", "Ribs", "Corn", "MedKit"
+    },
+    WEAPON_ITEMS = {
+        "Spear", "Crossbow", "Crossbow Cultist", "Rifle", "Revolver", "Rifle Ammo", "Revolver Ammo"
+    },
+    OTHER_ITEMS = {
+        "Bunny Foot", "Wolf Pelt", "Alpha Wolf Pelt", "Cultist Gem", "Forest Gem", "Bear Pelt", 
+        "Arctic Fox Pelt", "Polar Bear Pelt", "Gem of the Forest Fragment", "Bear Corpse", 
+        "Basketball", "Cultist", "Giant Sack", "Good Sack", "Seed Box", "Sapling", "Wildfire"
+    },
+    CHEST_ITEMS = {"Stronghold Diamond Chest", "Volcanic Chest1", "Volcanic Chest2"},
+    EATABLE_FOODS = {"All Food", "Carrot", "Morsel", "Bandage", "Medkit", "Cooked Morsel", "Steak", "Cooked Steak", 
+        "Berry", "Apple", "Pumpkin", "Cake", "Stew", "Hearty Stew", "Chili", "Ribs", "Corn", "MedKit"},
+    COIN_METHODS = {"Get Coins Instant", "Get Coins Instant V2"}
+}
+
+-- PivotTo System Functions
+function Module.getTargetPosition()
+    local basePos
     
-    -- Initialize preview folder
-    previewFolder = workspace:FindFirstChild("LogWallBuilderPreview")
-    if previewFolder then previewFolder:Destroy() end
-    previewFolder = Instance.new("Folder")
-    previewFolder.Name = "LogWallBuilderPreview"
-    previewFolder.Parent = workspace
-    
-    -- Cleanup on player leave
-    table.insert(connections, game.Players.PlayerRemoving:Connect(function(plr)
-        if plr == player then 
-            isActive = false
-            self.Config.isBuilding = false
-            for _, connection in pairs(connections) do
-                connection:Disconnect()
-            end
-            if previewFolder then
-                previewFolder:Destroy()
-            end
+    if Module.Vars.POSITION_MODE == "OuterTouchZone" then
+        local success, outer = pcall(function()
+            return workspace.Map.Campground.MainFire.OuterTouchZone
+        end)
+        if success and outer then
+            basePos = outer.Position
         end
-    end))
-end
-
-function LogWallBuilderModule:CountAvailableLogs()
-    local count = 0
-    local itemsFolder = workspace:FindFirstChild("Items")
-    
-    if itemsFolder then
-        for _, item in pairs(itemsFolder:GetChildren()) do
-            if item.Name == "Log" then
-                count = count + 1
+    elseif Module.Vars.POSITION_MODE == "Scrapper" then
+        local scrapper_paths = {
+            workspace.Map.Campground.Scrapper,
+            workspace.Map.Campground.Scrapper.Movers,
+            workspace.Map.Campground,
+            workspace.Map,
+        }
+        
+        for _, obj in ipairs(scrapper_paths) do
+            if obj then
+                local success, result = pcall(function()
+                    if obj:IsA("BasePart") then
+                        return obj.Position
+                    elseif obj:IsA("Model") then
+                        if obj.PrimaryPart then
+                            return obj.PrimaryPart.Position
+                        elseif obj:FindFirstChildWhichIsA("BasePart") then
+                            return obj:FindFirstChildWhichIsA("BasePart").Position
+                        else
+                            return obj:GetPivot().Position
+                        end
+                    end
+                end)
+                if success and result then
+                    basePos = result
+                    break
+                end
             end
         end
     end
-    return count
-end
-
-function LogWallBuilderModule:GetAvailableWood()
-    local woodTextLabel = workspace.Map.Campground.CraftingBench.WoodSign.SurfaceGui.TextLabel
-    local woodText = tostring(woodTextLabel.Text)
-    local woodCount = tonumber(woodText) or 0
-    return woodCount
-end
-
-function LogWallBuilderModule:CountLogWalls()
-    local count = 0
-    for _, structure in pairs(structuresFolder:GetChildren()) do
-        if structure.Name == "Log Wall" then
-            count = count + 1
+    
+    if not basePos then
+        local Character = LocalPlayer.Character
+        if Character and Character:FindFirstChild("HumanoidRootPart") then
+            basePos = Character.HumanoidRootPart.Position
+        else
+            basePos = Vector3.new(0, 50, 0)
         end
     end
-    return count
+    
+    return Vector3.new(basePos.X, basePos.Y + Module.Vars.HEIGHT_OFFSET, basePos.Z)
 end
 
-function LogWallBuilderModule:VerifyWallPlaced(expectedCount)
-    task.wait(self.Config.verificationDelay)
-    local currentCount = self:CountLogWalls()
-    return currentCount >= expectedCount
-end
-
-function LogWallBuilderModule:CreatePreviewPoint(position, index, total)
-    local part = Instance.new("Part")
-    part.Name = "PreviewPoint"
-    part.Size = Vector3.new(2, 15, 2)
-    part.Position = position
-    part.Material = Enum.Material.ForceField
-    part.Color = Color3.fromRGB(0, 180, 140)
-    part.Anchored = true
-    part.CanCollide = false
-    part.Transparency = 0.6
-    part.Parent = previewFolder
+function Module.bringItemPivot(item)
+    if not item or not item.Parent then
+        return false
+    end
     
-    local pointLight = Instance.new("PointLight")
-    pointLight.Brightness = 0.5
-    pointLight.Color = Color3.fromRGB(0, 180, 140)
-    pointLight.Range = 8
-    pointLight.Parent = part
-    
-    spawn(function()
-        while part.Parent do
-            local pulse = math.sin(tick() * 2 + index / total * math.pi * 2) * 0.15 + 0.85
-            part.Transparency = 0.6 + (1 - pulse) * 0.2
-            pointLight.Brightness = 0.3 + pulse * 0.3
-            task.wait(0.05)
+    task.spawn(function()
+        local basePos = Module.getTargetPosition()
+        
+        if Module.Vars.SCATTER_ENABLED then
+            local targetPos = Vector3.new(
+                basePos.X + math.random(-Module.Vars.SCATTER_RANGE, Module.Vars.SCATTER_RANGE),
+                basePos.Y + math.random(-2, 2),
+                basePos.Z + math.random(-Module.Vars.SCATTER_RANGE, Module.Vars.SCATTER_RANGE)
+            )
+            
+            pcall(function()
+                item:PivotTo(CFrame.new(targetPos))
+                itemDrag(item)
+            end)
+        else
+            pcall(function()
+                item:PivotTo(CFrame.new(basePos))
+                itemDrag(item)
+            end)
         end
     end)
     
-    return part
+    return true
 end
 
-function LogWallBuilderModule:GetCenterPosition()
-    local firePos = mainFire.Position
-    local groundY = firePos.Y - 2
-    return Vector3.new(firePos.X, groundY, firePos.Z)
+-- Map Unlock Functions
+function Module.isValidMapUnlockPart(part)
+    return part:IsA("BasePart") and
+           not part:FindFirstChildWhichIsA("Fire") and
+           not part:FindFirstChild("TouchInterest") and
+           not Module.Vars.mapUnlockVisitedParts[part]
 end
 
-function LogWallBuilderModule:CalculateWallPositions()
-    local centerPos = self:GetCenterPosition()
-    local positions = {}
+function Module.getValidMapUnlockParts(folder)
+    local parts = {}
+    for _, obj in ipairs(folder:GetChildren()) do
+        if obj:IsA("BasePart") and Module.isValidMapUnlockPart(obj) then
+            table.insert(parts, obj)
+        elseif obj:IsA("Model") or obj:IsA("Folder") then
+            local childParts = Module.getValidMapUnlockParts(obj)
+            for _, p in ipairs(childParts) do
+                table.insert(parts, p)
+            end
+        end
+    end
+    return parts
+end
+
+function Module.teleportToPosition(position)
+    if not position then return false end
     
-    for i = 1, self.Config.numWalls do
-        local angle = (i - 1) * (360 / self.Config.numWalls)
-        local angleRad = math.rad(angle)
-        
-        local xOffset = math.sin(angleRad) * self.Config.radius
-        local zOffset = math.cos(angleRad) * self.Config.radius
-        
-        local position = Vector3.new(
-            centerPos.X + xOffset,
-            centerPos.Y,
-            centerPos.Z + zOffset
-        )
-        
-        table.insert(positions, position)
+    local targetCFrame
+    if typeof(position) == "CFrame" then
+        targetCFrame = position
+    else
+        targetCFrame = CFrame.new(position + Vector3.new(0, 5, 0))
     end
     
-    return positions
+    local tweenInfo = TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local tween = Module.Services.TweenService:Create(HumanoidRootPart, tweenInfo, {CFrame = targetCFrame})
+    
+    tween:Play()
+    tween.Completed:Wait()
+    
+    return true
 end
 
-function LogWallBuilderModule:UpdatePreview()
-    if not self.Config.previewEnabled then
-        for _, child in pairs(previewFolder:GetChildren()) do
-            child:Destroy()
+function Module.unlockAllMapAreas()
+    local FogFolder = workspace.Map.Boundaries.Fog
+    local tweenTime = 1.5
+    local easingStyle = Enum.EasingStyle.Quad
+    local easingDir = Enum.EasingDirection.Out
+    local offsetY = 3
+    
+    Module.Vars.stopMapUnlocking = false
+    Module.Vars.mapUnlockVisitedParts = {}
+    
+    while not Module.Vars.stopMapUnlocking and Module.Vars.MAP_UNLOCK_ENABLED do
+        local parts = Module.getValidMapUnlockParts(FogFolder)
+        if #parts == 0 then
+            break
         end
+        
+        for _, part in ipairs(parts) do
+            if Module.Vars.stopMapUnlocking or not Module.Vars.MAP_UNLOCK_ENABLED then break end
+            if HumanoidRootPart and part then
+                local goalCFrame = part.CFrame * CFrame.new(0, offsetY, 0)
+                local tweenInfo = TweenInfo.new(tweenTime, easingStyle, easingDir)
+                local tween = Module.Services.TweenService:Create(HumanoidRootPart, tweenInfo, {CFrame = goalCFrame})
+                tween:Play()
+                tween.Completed:Wait()
+                Module.Vars.mapUnlockVisitedParts[part] = true
+            end
+        end
+        Module.Services.RunService.Heartbeat:Wait()
+    end
+end
+
+-- Children Collection Functions
+function Module.getChildNPC(kidId)
+    local childNPCs = Module.Services.CollectionService:GetTagged("ChildNPC")
+    for _, npc in pairs(childNPCs) do
+        if npc:GetAttribute("KidId") == kidId then
+            return npc
+        end
+    end
+    return nil
+end
+
+function Module.getChildLocationFromAttributes(kidId)
+    local success, location = pcall(function()
+        if workspace.Map and workspace.Map:FindFirstChild("MissingKids") then
+            local loc = workspace.Map.MissingKids:GetAttribute(kidId)
+            if loc then
+                return Vector3.new(loc.X, 0, loc.Z)
+            end
+        end
+        return nil
+    end)
+    return success and location or nil
+end
+
+function Module.isChildInBag(name)
+    local itemBag = LocalPlayer:WaitForChild("ItemBag")
+    return itemBag:FindFirstChild(name) ~= nil
+end
+
+function Module.pickupChild(name, maxAttempts)
+    maxAttempts = maxAttempts or 3
+    local attempts = 0
+    local inventory = LocalPlayer:WaitForChild("Inventory")
+    local oldSack = inventory:WaitForChild("Old Sack")
+    local remote = Module.Services.ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("RequestBagStoreItem")
+    
+    while attempts < maxAttempts do
+        attempts = attempts + 1
+        
+        if Module.isChildInBag(name) then
+            return true
+        end
+        
+        local characters = workspace:WaitForChild("Characters")
+        local childNPC = characters:FindFirstChild(name)
+        
+        if childNPC then
+            local args = {oldSack, childNPC}
+            local success, result = pcall(function()
+                return remote:InvokeServer(unpack(args))
+            end)
+            
+            if success then
+                task.wait(2)
+                if Module.isChildInBag(name) then
+                    return true
+                end
+            end
+        else
+            break
+        end
+        
+        if attempts < maxAttempts then
+            task.wait(2)
+        end
+    end
+    
+    return false
+end
+
+function Module.advancedChildSearch(kidId)
+    local childData = {
+        id = kidId,
+        npc = Module.getChildNPC(kidId),
+        attributeLocation = Module.getChildLocationFromAttributes(kidId),
+        position = nil
+    }
+    
+    local actualPos = nil
+    if childData.npc and childData.npc.PrimaryPart then
+        actualPos = childData.npc.PrimaryPart.Position
+    elseif childData.attributeLocation then
+        actualPos = childData.attributeLocation
+    end
+    
+    if actualPos then
+        childData.position = actualPos
+    end
+    
+    return childData
+end
+
+function Module.collectAllChildren()
+    local inventory = LocalPlayer:WaitForChild("Inventory")
+    local oldSack = inventory:WaitForChild("Old Sack")
+    local dropRemote = Module.Services.ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("RequestBagDropItem")
+    local itemBag = LocalPlayer:WaitForChild("ItemBag")
+    
+    local childrenStatus = {
+        ["Lost Child"] = false,
+        ["Lost Child2"] = false,
+        ["Lost Child3"] = false,
+        ["Lost Child4"] = false
+    }
+    
+    local function countCollectedChildren()
+        local count = 0
+        for childName, collected in pairs(childrenStatus) do
+            if collected or Module.isChildInBag(childName) then
+                count = count + 1
+                childrenStatus[childName] = true
+            end
+        end
+        return count
+    end
+    
+    local characters = workspace:WaitForChild("Characters")
+    
+    local npc1 = characters:FindFirstChild("Lost Child")
+    if npc1 and npc1:FindFirstChild("HumanoidRootPart") then
+        local npcHRP1 = npc1:WaitForChild("HumanoidRootPart")
+        HumanoidRootPart.CFrame = npcHRP1.CFrame + Vector3.new(0, 3, 0)
+        task.wait(2)
+        Module.pickupChild("Lost Child")
+    end
+    task.wait(2)
+    
+    local firstCFrame2 = CFrame.new(-79.5802002, 1.59426916, 519.86499, 0.478056967, 0, 0.8783288, 0, 1, 0, -0.8783288, 0, 0.478056967)
+    HumanoidRootPart.CFrame = firstCFrame2
+    task.wait(2)
+    
+    local npc2 = characters:FindFirstChild("Lost Child2")
+    if npc2 and npc2:FindFirstChild("HumanoidRootPart") then
+        HumanoidRootPart.CFrame = npc2.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
+        task.wait(2)
+        Module.pickupChild("Lost Child2")
+    end
+    task.wait(2)
+    
+    local firstCFrame3 = CFrame.new(755.127075, 3.54653406, -424.745117, -1, 0, 0, 0, 1, 0, 0, 0, -1)
+    HumanoidRootPart.CFrame = firstCFrame3
+    task.wait(2)
+    
+    local npc3 = characters:FindFirstChild("Lost Child3")
+    if npc3 and npc3:FindFirstChild("HumanoidRootPart") then
+        HumanoidRootPart.CFrame = npc3.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
+        task.wait(2)
+        Module.pickupChild("Lost Child3")
+    end
+    task.wait(2)
+    
+    local strongholdCFrame = CFrame.new(-560, -0.598167777, -280, -1, 0, 0, 0, 1, 0, 0, 0, -1)
+    HumanoidRootPart.CFrame = strongholdCFrame
+    task.wait(2)
+
+    repeat
+        task.wait(0.5)
+    until workspace:FindFirstChild("Terrain") and workspace.Terrain:IsA("Terrain") and workspace.Terrain:FindFirstChildOfClass("Folder") == nil
+
+    local secondCFrame4 = CFrame.new(-915.5, -1.05412531, -530, 0, 0, 1, 0, 1, 0, -1, 0, 0)
+    HumanoidRootPart.CFrame = secondCFrame4
+    task.wait(2)
+
+    local npc4 = characters:FindFirstChild("Lost Child4")
+    if npc4 and npc4:FindFirstChild("HumanoidRootPart") then
+        HumanoidRootPart.CFrame = npc4.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
+        task.wait(2)
+        Module.pickupChild("Lost Child4")
+    end
+    task.wait(2)
+    
+    local collectedCount = countCollectedChildren()
+    
+    if collectedCount < 4 then
+        local CHILD_NAMES = {"DinoKid", "KrakenKid", "SquidKid", "KoalaKid"}
+        
+        for _, kidId in ipairs(CHILD_NAMES) do
+            local childData = Module.advancedChildSearch(kidId)
+            
+            if childData and childData.position then
+                local originalChildName = nil
+                if kidId == "DinoKid" then originalChildName = "Lost Child"
+                elseif kidId == "KrakenKid" then originalChildName = "Lost Child2"
+                elseif kidId == "SquidKid" then originalChildName = "Lost Child3"
+                elseif kidId == "KoalaKid" then originalChildName = "Lost Child4"
+                end
+                
+                if originalChildName and not Module.isChildInBag(originalChildName) then
+                    HumanoidRootPart.CFrame = CFrame.new(childData.position + Vector3.new(0, 5, 0))
+                    task.wait(2)
+                    Module.pickupChild(originalChildName, 2)
+                    task.wait(1)
+                end
+            end
+        end
+    end
+    
+    collectedCount = countCollectedChildren()
+    
+    if collectedCount > 0 then
+        local mainFirePos = workspace.Map.Campground.MainFire.PrimaryPart.Position
+        Module.teleportToPosition(mainFirePos)
+        task.wait(3)
+        
+        local function dropChild(name)
+            local childInBag = itemBag:FindFirstChild(name)
+            if childInBag then
+                pcall(function()
+                    dropRemote:FireServer(oldSack, childInBag, false)
+                end)
+                task.wait(0.5)
+            end
+        end
+        
+        for childName, collected in pairs(childrenStatus) do
+            if collected or Module.isChildInBag(childName) then
+                dropChild(childName)
+            end
+        end
+    end
+end
+
+function Module.teleportToSpecificChild(kidId)
+    if kidId == "None" then return end
+    
+    local childData = Module.advancedChildSearch(kidId)
+    
+    if childData and childData.position then
+        HumanoidRootPart.CFrame = CFrame.new(childData.position + Vector3.new(0, 5, 0))
+    elseif childData.npc and childData.npc:FindFirstChild("HumanoidRootPart") then
+        HumanoidRootPart.CFrame = childData.npc.HumanoidRootPart.CFrame + Vector3.new(0, 5, 0)
+    end
+end
+
+-- Visual Functions
+Module.fullbrightConnection = nil
+
+function Module.toggleFullBright(enabled)
+    if Module.fullbrightConnection then
+        Module.fullbrightConnection:Disconnect()
+        Module.fullbrightConnection = nil
+    end
+    
+    if enabled then
+        Module.Services.Lighting.Brightness = 2
+        Module.Services.Lighting.ClockTime = 12
+        Module.Services.Lighting.FogEnd = 100000
+        Module.Services.Lighting.GlobalShadows = false
+        Module.Services.Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+        
+        Module.fullbrightConnection = Module.Services.Lighting.Changed:Connect(function(property)
+            if Module.Vars.fullBrightEnabled then
+                if property == "Brightness" and Module.Services.Lighting.Brightness ~= 2 then
+                    Module.Services.Lighting.Brightness = 2
+                elseif property == "ClockTime" and Module.Services.Lighting.ClockTime ~= 12 then
+                    Module.Services.Lighting.ClockTime = 12
+                elseif property == "FogEnd" and Module.Services.Lighting.FogEnd ~= 100000 then
+                    Module.Services.Lighting.FogEnd = 100000
+                elseif property == "GlobalShadows" and Module.Services.Lighting.GlobalShadows ~= false then
+                    Module.Services.Lighting.GlobalShadows = false
+                elseif property == "OutdoorAmbient" and Module.Services.Lighting.OutdoorAmbient ~= Color3.fromRGB(128, 128, 128) then
+                    Module.Services.Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+                end
+            end
+        end)
+    else
+        Module.Services.Lighting.Brightness = 1
+        Module.Services.Lighting.ClockTime = 14
+        Module.Services.Lighting.FogEnd = 3000
+        Module.Services.Lighting.GlobalShadows = true
+        Module.Services.Lighting.OutdoorAmbient = Color3.fromRGB(70, 70, 70)
+    end
+    Module.Vars.fullBrightEnabled = enabled
+end
+
+function Module.createNameESP(player)
+    if player == LocalPlayer then return end
+    if player.Character and player.Character:FindFirstChild("Head") then
+        local billboardGui = Instance.new("BillboardGui")
+        billboardGui.Adornee = player.Character.Head
+        billboardGui.Size = UDim2.new(0, 200, 0, 50)
+        billboardGui.StudsOffset = Vector3.new(0, 2, 0)
+        billboardGui.Parent = workspace
+        
+        local textLabel = Instance.new("TextLabel")
+        textLabel.Size = UDim2.new(1, 0, 1, 0)
+        textLabel.BackgroundTransparency = 1
+        textLabel.Text = player.Name
+        textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        textLabel.TextScaled = true
+        textLabel.Font = Enum.Font.SourceSansBold
+        textLabel.Parent = billboardGui
+        
+        local function updateESP()
+            if player.Character and player.Character:FindFirstChild("Head") then
+                billboardGui.Adornee = player.Character.Head
+            else
+                billboardGui:Destroy()
+            end
+        end
+        
+        Module.Vars.espConnections[player] = player.CharacterAdded:Connect(function()
+            task.wait(1)
+            updateESP()
+        end)
+        
+        return billboardGui
+    end
+end
+
+function Module.togglePlayerESP(enabled)
+    if enabled then
+        for _, player in pairs(Module.Services.Players:GetPlayers()) do
+            Module.createNameESP(player)
+        end
+        
+        Module.Vars.espConnections.playerAdded = Module.Services.Players.PlayerAdded:Connect(function(player)
+            task.wait(1)
+            Module.createNameESP(player)
+        end)
+    else
+        for _, connection in pairs(Module.Vars.espConnections) do
+            connection:Disconnect()
+        end
+        Module.Vars.espConnections = {}
+        
+        for _, gui in pairs(workspace:GetChildren()) do
+            if gui:IsA("BillboardGui") then
+                gui:Destroy()
+            end
+        end
+    end
+    Module.Vars.espEnabled = enabled
+end
+
+function Module.copyGameTeleport()
+    local jobId = game.JobId
+    local placeId = game.PlaceId
+    local teleportString = string.format("game:GetService('TeleportService'):TeleportToPlaceInstance(%d, '%s')", placeId, jobId)
+    setclipboard(teleportString)
+end
+
+-- Combat Functions
+function Module.getCurrentEquipped()
+    local character = LocalPlayer.Character
+    if character then
+        local toolHandle = character:FindFirstChild("ToolHandle")
+        if toolHandle then
+            local originalItem = toolHandle:FindFirstChild("OriginalItem")
+            if originalItem and originalItem.Value then
+                Module.Vars.currentEquippedItem = originalItem.Value.Name
+                return originalItem.Value
+            end
+        end
+        
+        local tool = character:FindFirstChildOfClass("Tool")
+        if tool then
+            Module.Vars.currentEquippedItem = tool.Name
+            return tool
+        end
+    end
+    
+    Module.Vars.currentEquippedItem = "None"
+    return nil
+end
+
+function Module.getCurrentWeapon()
+    local equippedWeapon = Module.getCurrentEquipped()
+    if equippedWeapon then
+        return equippedWeapon
+    end
+    
+    for _, item in pairs(Inventory:GetChildren()) do
+        local itemName = string.lower(item.Name)
+        if string.find(itemName, "axe") or 
+           string.find(itemName, "sword") or 
+           string.find(itemName, "spear") or
+           string.find(itemName, "knife") or
+           string.find(itemName, "hammer") or
+           string.find(itemName, "pick") or
+           string.find(itemName, "morning star") then
+            return item
+        end
+    end
+    
+    return nil
+end
+
+function Module.clearTreeMarkers()
+    for _, marker in pairs(Module.Vars.treeMarkers) do
+        if marker and marker.Parent then
+            marker:Destroy()
+        end
+    end
+    table.clear(Module.Vars.treeMarkers)
+end
+
+function Module.createTreeMarker(tree)
+    local part = tree:FindFirstChild("PrimaryPart") or tree:FindFirstChild("Trunk") or tree:FindFirstChildOfClass("Part")
+    if not part then return end
+    
+    local marker = Instance.new("BillboardGui")
+    marker.Name = "TreeMarker"
+    marker.Size = UDim2.new(0, 30, 0, 30)
+    marker.StudsOffset = Vector3.new(0, 5, 0)
+    marker.Adornee = part
+    marker.AlwaysOnTop = true
+    marker.Parent = game:GetService("CoreGui")
+    
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(1, 0, 1, 0)
+    dot.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    dot.BorderSizePixel = 0
+    dot.Parent = marker
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = dot
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 100, 100)
+    stroke.Thickness = 2
+    stroke.Transparency = 0.3
+    stroke.Parent = dot
+    
+    table.insert(Module.Vars.treeMarkers, marker)
+    return marker
+end
+
+function Module.attackWithItem(item)
+    local charactersFolder = Module.Services.Workspace:FindFirstChild("Characters")
+    if not charactersFolder then 
+        return 
+    end
+    
+    for _, target in pairs(charactersFolder:GetChildren()) do
+        if target ~= LocalPlayer.Character and target:FindFirstChild("NPC") and target:HasTag("NPC") then
+            task.spawn(function()
+                pcall(function()
+                    local currentWeapon = Module.getCurrentWeapon()
+                    if not currentWeapon then return end
+                    
+                    local hitId = tostring(tick()) .. "_" .. LocalPlayer.UserId
+                    local remoteEvents = Module.Services.ReplicatedStorage:WaitForChild("RemoteEvents")
+                    local toolDamageEvent = remoteEvents:WaitForChild("ToolDamageObject")
+                    
+                    toolDamageEvent:InvokeServer(target, currentWeapon, hitId, LocalPlayer.Character.HumanoidRootPart.CFrame)
+                end)
+            end)
+        end
+    end
+end
+
+function Module.chopTreesWithItem(item)
+    local mapFolder = Module.Services.Workspace:FindFirstChild("Map")
+    if not mapFolder then 
+        return 
+    end
+    
+    Module.clearTreeMarkers()
+    
+    local trees = {}
+    
+    for _, part in pairs(mapFolder:GetDescendants()) do
+        if part:IsA("Model") and part:GetAttribute("Resource") then
+            local matchesType = false
+            
+            if Module.Vars.selectedTreeType == "smalltree" then
+                if string.find(string.lower(part.Name), "tree") and 
+                   not string.find(string.lower(part.Name), "wood") and
+                   not string.find(string.lower(part.Name), "big") then
+                    matchesType = true
+                end
+            elseif Module.Vars.selectedTreeType == "bigtree" then
+                if string.find(string.lower(part.Name), "wood") or 
+                   string.find(string.lower(part.Name), "big") then
+                    matchesType = true
+                end
+            end
+            
+            if matchesType and part:GetAttribute("AllowTool_" .. (item and item:GetAttribute("ToolName") or "Unknown")) then
+                table.insert(trees, part)
+            end
+        end
+    end
+    
+    if Module.Vars.selectedTreeType == "bigtree" and Module.Vars.treeBigLimit > 0 then
+        local limitedTrees = {}
+        for i = 1, math.min(#trees, Module.Vars.treeBigLimit) do
+            table.insert(limitedTrees, trees[i])
+        end
+        trees = limitedTrees
+    end
+    
+    if Module.Vars.selectedTreeType == "bigtree" then
+        for _, tree in pairs(trees) do
+            Module.createTreeMarker(tree)
+        end
+    end
+    
+    for _, tree in pairs(trees) do
+        task.spawn(function()
+            pcall(function()
+                local currentWeapon = Module.getCurrentWeapon()
+                if not currentWeapon then return end
+                
+                local hitId = tostring(tick()) .. "_" .. LocalPlayer.UserId
+                local remoteEvents = Module.Services.ReplicatedStorage:WaitForChild("RemoteEvents")
+                local toolDamageEvent = remoteEvents:WaitForChild("ToolDamageObject")
+                
+                toolDamageEvent:InvokeServer(tree, currentWeapon, hitId, LocalPlayer.Character.HumanoidRootPart.CFrame)
+            end)
+        end)
+    end
+    
+    task.spawn(function()
+        task.wait(5)
+        Module.clearTreeMarkers()
+    end)
+end
+
+-- Item Collection Functions
+function Module.getDropdownItems()
+    local dropdownItems = {}
+    table.insert(dropdownItems, "=== FUEL ITEMS ===")
+    for _, item in ipairs(Module.Categories.FUEL_ITEMS) do
+        table.insert(dropdownItems, item)
+    end
+    table.insert(dropdownItems, "=== GEAR ITEMS ===")
+    for _, item in ipairs(Module.Categories.GEAR_ITEMS) do
+        table.insert(dropdownItems, item)
+    end
+    table.insert(dropdownItems, "=== WEAPON ITEMS ===")
+    for _, item in ipairs(Module.Categories.WEAPON_ITEMS) do
+        table.insert(dropdownItems, item)
+    end
+    table.insert(dropdownItems, "=== FOOD ITEMS ===")
+    for _, item in ipairs(Module.Categories.FOOD_ITEMS) do
+        table.insert(dropdownItems, item)
+    end
+    table.insert(dropdownItems, "=== CHEST ITEMS ===")
+    for _, item in ipairs(Module.Categories.CHEST_ITEMS) do
+        table.insert(dropdownItems, item)
+    end
+    table.insert(dropdownItems, "=== OTHER ITEMS ===")
+    for _, item in ipairs(Module.Categories.OTHER_ITEMS) do
+        table.insert(dropdownItems, item)
+    end
+    table.insert(dropdownItems, "=== COLLECTION GROUPS ===")
+    table.insert(dropdownItems, "All Fuel")
+    table.insert(dropdownItems, "All Gear")
+    table.insert(dropdownItems, "All Weapons")
+    table.insert(dropdownItems, "All Food")
+    table.insert(dropdownItems, "All Chests")
+    table.insert(dropdownItems, "All Others")
+    table.insert(dropdownItems, "All Items")
+    table.insert(dropdownItems, "All Flowers")
+    return dropdownItems
+end
+
+function Module.getMainFirePosition()
+    local mainFirePaths = {
+        workspace.Map.Campground.MainFire,
+        workspace.Map.Campground,
+        workspace.Map,
+    }
+    
+    for _, obj in ipairs(mainFirePaths) do
+        if obj then
+            if obj:IsA("BasePart") then
+                return obj.Position
+            elseif obj:IsA("Model") then
+                if obj.PrimaryPart then
+                    return obj.PrimaryPart.Position
+                elseif obj:FindFirstChildWhichIsA("BasePart") then
+                    return obj:FindFirstChildWhichIsA("BasePart").Position
+                else
+                    return obj:GetPivot().Position
+                end
+            end
+        end
+    end
+    
+    return workspace:WaitForChild("Terrain").Position
+end
+
+function Module.teleportToItem(item)
+    if not item or not item.Parent then
+        return false
+    end
+    
+    local itemPosition
+    if item:IsA("Model") then
+        itemPosition = item:GetModelCFrame().Position
+    elseif item:IsA("BasePart") then
+        itemPosition = item.Position
+    else
+        return false
+    end
+    
+    local targetPosition = itemPosition + Vector3.new(0, 5, 0)
+    
+    local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local tween = Module.Services.TweenService:Create(HumanoidRootPart, tweenInfo, {CFrame = CFrame.new(targetPosition)})
+    
+    tween:Play()
+    return true
+end
+
+Module.diamondChestConnection = nil
+
+function Module.setupDiamondChestDetection(Fluent)
+    if Module.diamondChestConnection then
+        Module.diamondChestConnection:Disconnect()
+    end
+    
+    if not Module.Vars.DIAMOND_CHEST_DETECTION then
         return
     end
     
-    previewFolder:ClearAllChildren()
-    
-    local positions = self:CalculateWallPositions()
-    
-    for i, position in pairs(positions) do
-        self:CreatePreviewPoint(position, i, #positions)
-    end
-end
-
-function LogWallBuilderModule:ClearPreview()
-    previewFolder:ClearAllChildren()
-end
-
-function LogWallBuilderModule:GetLatestInventoryItem()
-    local items = inventory:GetChildren()
-    if #items == 0 then return nil end
-    return items[#items]
-end
-
-function LogWallBuilderModule:BuildCircle(structureName, onStatusUpdate)
-    if self.Config.isBuilding then
-        return false, "Already building"
-    end
-    
-    local availableWood = self:GetAvailableWood()
-    local neededWood = self.Config.numWalls * self.Config.woodPerWall
-    
-    if availableWood < neededWood then
-        return false, "Need " .. (neededWood - availableWood) .. " more wood"
-    end
-    
-    self.Config.isBuilding = true
-    self.Config.isPaused = false
-    
-    local centerPos = self:GetCenterPosition()
-    local positions = self:CalculateWallPositions()
-    local successCount = 0
-    local failCount = 0
-    local initialWallCount = self:CountLogWalls()
-    
-    if onStatusUpdate then
-        onStatusUpdate("started", {walls = self.Config.numWalls})
-    end
-    
-    for i, position in ipairs(positions) do
-        if not self.Config.isBuilding then 
-            if onStatusUpdate then
-                onStatusUpdate("cancelled", {wallNumber = i})
-            end
-            break 
-        end
-        
-        while self.Config.isPaused do
+    Module.diamondChestConnection = Items.ChildAdded:Connect(function(child)
+        if child.Name == "Stronghold Diamond Chest" then
+            Fluent:Notify({
+                Title = "Diamond Chest Found",
+                Content = "Moving you to Diamond Chest location now",
+                Duration = 5
+            })
+            
             task.wait(0.5)
+            Module.teleportToItem(child)
         end
-        
-        CraftItem:InvokeServer(structureName)
-        task.wait(0.15)
-        
-        local structureItem = self:GetLatestInventoryItem()
-        if not structureItem then
-            failCount = failCount + 1
-            
-            if failCount >= 3 then
-                self.Config.isPaused = true
-                self.Config.isBuilding = false
-                
-                if onStatusUpdate then
-                    onStatusUpdate("placement_failed", {wallNumber = i})
-                end
-                
-                while self.Config.isPaused do
-                    task.wait(0.5)
-                end
-                
-                self.Config.isBuilding = true
-                failCount = 0
+    end)
+end
+
+function Module.getPlayerList()
+    local playerList = {"Me"}
+    for _, player in pairs(Module.Services.Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            table.insert(playerList, player.Name)
+        end
+    end
+    return playerList
+end
+
+function Module.getSelectedPlayerPosition()
+    if Module.Vars.selectedPlayer == "Me" then
+        return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position
+    else
+        for _, player in pairs(Module.Services.Players:GetPlayers()) do
+            if player.Name == Module.Vars.selectedPlayer then
+                return player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character.HumanoidRootPart.Position
             end
-            continue
         end
+    end
+    return nil
+end
+
+function Module.bringItem(item)
+    if not item or not item.Parent then
+        return false
+    end
+    
+    if item.Name == "Stronghold Diamond Chest" then
+        return Module.teleportToItem(item)
+    end
+    
+    task.spawn(function()
+        local targetPlayerPos = Module.getSelectedPlayerPosition()
+        local targetPos
         
-        local lookDirection = (centerPos - position).Unit
-        local rightVector = Vector3.new(0, 1, 0):Cross(lookDirection)
-        local upVector = lookDirection:Cross(rightVector)
-        
-        local wallCFrame = CFrame.fromMatrix(position, rightVector, upVector, lookDirection)
-        
-        local args = {
-            structureItem,
-            {
-                Valid = true,
-                CFrame = wallCFrame,
-                Position = position
-            },
-            wallCFrame
-        }
-        
-        local success = pcall(function()
-            RequestPlaceStructure:InvokeServer(unpack(args))
-        end)
-        
-        if not success then
-            failCount = failCount + 1
-            
-            if failCount >= 3 then
-                self.Config.isPaused = true
-                self.Config.isBuilding = false
-                
-                if onStatusUpdate then
-                    onStatusUpdate("placement_failed", {wallNumber = i})
-                end
-                
-                while self.Config.isPaused do
-                    task.wait(0.5)
-                end
-                
-                self.Config.isBuilding = true
-                failCount = 0
+        if targetPlayerPos then
+            if Module.Vars.SCATTER_ENABLED then
+                targetPos = targetPlayerPos + Vector3.new(
+                    math.random(-3, 3), 
+                    Module.Vars.ITEM_HEIGHT, 
+                    math.random(-3, 3)
+                )
+            else
+                targetPos = targetPlayerPos + Vector3.new(0, Module.Vars.ITEM_HEIGHT, 0)
             end
         else
-            local expectedCount = initialWallCount + successCount + 1
-            local wasPlaced = self:VerifyWallPlaced(expectedCount)
-            
-            if wasPlaced then
-                successCount = successCount + 1
-                failCount = 0
+            local fallbackPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position
+            if fallbackPos then
+                targetPos = fallbackPos + Vector3.new(0, Module.Vars.ITEM_HEIGHT, 0)
             else
-                failCount = failCount + 1
-                
-                if failCount >= 3 then
-                    self.Config.isPaused = true
-                    self.Config.isBuilding = false
-                    
-                    if onStatusUpdate then
-                        onStatusUpdate("walls_not_appearing", {wallNumber = i})
-                    end
-                    
-                    while self.Config.isPaused do
-                        task.wait(0.5)
-                    end
-                    
-                    self.Config.isBuilding = true
-                    failCount = 0
-                    initialWallCount = self:CountLogWalls()
-                end
+                return false
             end
         end
         
-        if self.Config.buildSpeed > 0 then
-            task.wait(self.Config.buildSpeed)
-        end
-    end
+        pcall(function()
+            item:MoveTo(targetPos)
+            itemDrag(item)
+        end)
+    end)
     
-    self.Config.isBuilding = false
-    self.Config.isPaused = false
-    
-    if onStatusUpdate then
-        onStatusUpdate("complete", {successCount = successCount, total = self.Config.numWalls})
-    end
-    
-    return true, successCount
+    return true
 end
 
-function LogWallBuilderModule:StopBuilding()
-    self.Config.isBuilding = false
-    self.Config.isPaused = false
-end
-
-function LogWallBuilderModule:ContinueBuilding()
-    if self.Config.isPaused then
-        self.Config.isPaused = false
-        return true
+function Module.isInCategory(itemName, category)
+    for _, item in ipairs(category) do
+        if itemName == item then return true end
     end
     return false
 end
 
-return LogWallBuilderModule
+function Module.bringAllFlowers()
+    local collected = 0
+    local flowerPaths = {
+        workspace.Map.Landmarks,
+        workspace.Map,
+    }
+    
+    for _, path in ipairs(flowerPaths) do
+        if path then
+            for _, item in ipairs(path:GetChildren()) do
+                if item.Name == "Flower" then
+                    task.spawn(function()
+                        local targetPos = HumanoidRootPart.Position + Vector3.new(
+                            math.random(-3, 3), 
+                            Module.Vars.ITEM_HEIGHT, 
+                            math.random(-3, 3)
+                        )
+                        
+                        pcall(function()
+                            item:MoveTo(targetPos)
+                            collected = collected + 1
+                        end)
+                    end)
+                    task.wait(Module.Vars.BRING_SPEED)
+                end
+            end
+            
+            for _, item in ipairs(path:GetDescendants()) do
+                if item.Name == "Flower" and item.Parent ~= path then
+                    task.spawn(function()
+                        local targetPos = HumanoidRootPart.Position + Vector3.new(
+                            math.random(-3, 3), 
+                            Module.Vars.ITEM_HEIGHT, 
+                            math.random(-3, 3)
+                        )
+                        
+                        pcall(function()
+                            item:MoveTo(targetPos)
+                            collected = collected + 1
+                        end)
+                    end)
+                    task.wait(Module.Vars.BRING_SPEED)
+                end
+            end
+        end
+    end
+    
+    return collected
+end
+
+function Module.matchesItemPattern(itemName, pattern)
+    if pattern == "All Fuel" then
+        return Module.isInCategory(itemName, Module.Categories.FUEL_ITEMS)
+    elseif pattern == "All Gear" then
+        return Module.isInCategory(itemName, Module.Categories.GEAR_ITEMS)
+    elseif pattern == "All Weapons" then
+        return Module.isInCategory(itemName, Module.Categories.WEAPON_ITEMS)
+    elseif pattern == "All Food" then
+        return Module.isInCategory(itemName, Module.Categories.FOOD_ITEMS)
+    elseif pattern == "All Chests" then
+        return Module.isInCategory(itemName, Module.Categories.CHEST_ITEMS)
+    elseif pattern == "All Others" then
+        return Module.isInCategory(itemName, Module.Categories.OTHER_ITEMS)
+    elseif pattern == "All Items" then
+        return true
+    elseif pattern == "All Flowers" then
+        return false
+    else
+        if string.find(pattern, "===") then
+            return false
+        end
+        return itemName == pattern
+    end
+end
+
+function Module.collectItems(itemPattern, Fluent)
+    if string.find(itemPattern, "===") then
+        Fluent:Notify({
+            Title = "Invalid Selection",
+            Content = "Please select actual item not category header",
+            Duration = 2
+        })
+        return
+    end
+    
+    if itemPattern == "All Flowers" then
+        local collected = Module.bringAllFlowers()
+        Fluent:Notify({
+            Title = "Flower Collection Complete",
+            Content = "Collected " .. collected .. " flowers",
+            Duration = 3
+        })
+        return
+    end
+    
+    Module.Vars.collectingActive = true
+    local collected = 0
+    local collectedItems = {}
+    
+    for _, item in ipairs(Items:GetChildren()) do
+        if not Module.Vars.collectingActive then break end
+        
+        if Module.matchesItemPattern(item.Name, itemPattern) then
+            if Module.bringItem(item) then
+                collected = collected + 1
+                table.insert(collectedItems, item.Name)
+                
+                if item.Name == "Stronghold Diamond Chest" then
+                    Fluent:Notify({
+                        Title = "Moved to Diamond Chest",
+                        Content = "You have been moved to Diamond Chest location",
+                        Duration = 4
+                    })
+                end
+                
+                task.wait(Module.Vars.BRING_SPEED)
+            end
+        end
+    end
+    
+    Module.Vars.collectingActive = false
+    
+    local itemTypes = {}
+    for _, name in ipairs(collectedItems) do
+        itemTypes[name] = (itemTypes[name] or 0) + 1
+    end
+    
+    local message = "Collected " .. collected .. " items"
+    if collected > 0 then
+        message = message .. ":"
+        for itemType, count in pairs(itemTypes) do
+            message = message .. "\n• " .. count .. "x " .. itemType
+        end
+    end
+    
+    Fluent:Notify({
+        Title = "Collection Complete",
+        Content = message,
+        Duration = 3
+    })
+end
+
+function Module.collectScrapperItems(Fluent)
+    Module.Vars.collectingActive = true
+    local collected = 0
+    local collectedItems = {}
+    
+    local SCRAPPER_GEAR = {}
+    for _, item in ipairs(Module.Categories.GEAR_ITEMS) do
+        if item ~= "Iron Body" and item ~= "Leather Body" and item ~= "Strong Axe" and item ~= "Old Rod" and item ~= "Old Flashlight" then
+            table.insert(SCRAPPER_GEAR, item)
+        end
+    end
+    
+    for _, item in ipairs(Items:GetChildren()) do
+        if not Module.Vars.collectingActive then break end
+        
+        local shouldCollect = false
+        
+        for _, gearName in ipairs(SCRAPPER_GEAR) do
+            if item.Name == gearName then
+                shouldCollect = true
+                break
+            end
+        end
+        
+        if item.Name == "Log" then
+            shouldCollect = true
+        end
+        
+        if shouldCollect then
+            if Module.bringItemPivot(item) then
+                collected = collected + 1
+                table.insert(collectedItems, item.Name)
+                task.wait(Module.Vars.BRING_SPEED)
+            end
+        end
+    end
+    
+    Module.Vars.collectingActive = false
+    
+    local itemTypes = {}
+    for _, name in ipairs(collectedItems) do
+        itemTypes[name] = (itemTypes[name] or 0) + 1
+    end
+    
+    local message = "Collected " .. collected .. " scrapper items to " .. Module.Vars.POSITION_MODE
+    if collected > 0 then
+        message = message .. ":"
+        for itemType, count in pairs(itemTypes) do
+            message = message .. "\n• " .. count .. "x " .. itemType
+        end
+    end
+    
+    Fluent:Notify({
+        Title = "Scrapper Collection Complete",
+        Content = message,
+        Duration = 3
+    })
+end
+
+function Module.collectFuelPivot(Fluent)
+    Module.Vars.collectingActive = true
+    local collected = 0
+    local collectedItems = {}
+    
+    for _, item in ipairs(Items:GetChildren()) do
+        if not Module.Vars.collectingActive then break end
+        
+        if Module.isInCategory(item.Name, Module.Categories.FUEL_ITEMS) then
+            if Module.bringItemPivot(item) then
+                collected = collected + 1
+                table.insert(collectedItems, item.Name)
+                task.wait(Module.Vars.BRING_SPEED)
+            end
+        end
+    end
+    
+    Module.Vars.collectingActive = false
+    
+    local itemTypes = {}
+    for _, name in ipairs(collectedItems) do
+        itemTypes[name] = (itemTypes[name] or 0) + 1
+    end
+    
+    local message = "Collected " .. collected .. " fuel items to " .. Module.Vars.POSITION_MODE
+    if collected > 0 then
+        message = message .. ":"
+        for itemType, count in pairs(itemTypes) do
+            message = message .. "\n• " .. count .. "x " .. itemType
+        end
+    end
+    
+    Fluent:Notify({
+        Title = "Fuel Collection Complete",
+        Content = message,
+        Duration = 3
+    })
+end
+
+function Module.openAndLootChests(Fluent)
+    local chestCount = 0
+    local lootedItems = 0
+    
+    for _, chest in ipairs(Items:GetChildren()) do
+        if chest:IsA("Model") and (chest.Name:match("Item Chest") or chest:GetAttribute("Interaction") == "ItemChest") then
+            chestCount = chestCount + 1
+            
+            for _, part in ipairs(chest:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CFrame = HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
+                end
+            end
+
+            local tempConnection
+            tempConnection = Items.ChildAdded:Connect(function(child)
+                Module.bringItem(child)
+                lootedItems = lootedItems + 1
+            end)
+
+            local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then
+                if fireproximityprompt then
+                    fireproximityprompt(prompt, 1)
+                end
+            end
+
+            task.wait(1)
+            if tempConnection then
+                tempConnection:Disconnect()
+            end
+            
+            task.wait(0.2)
+        end
+    end
+    
+    Fluent:Notify({
+        Title = "Chest Opening Complete",
+        Content = "Opened " .. chestCount .. " chests and collected " .. lootedItems .. " items",
+        Duration = 3
+    })
+end
+
+function Module.moveFoodToMainFire()
+    local mainFirePos = Module.getMainFirePosition()
+    local movedCount = 0
+    
+    for _, item in ipairs(Items:GetChildren()) do
+        local isFood = false
+        for _, foodName in ipairs(Module.Categories.FOOD_ITEMS) do
+            if item.Name == foodName then
+                isFood = true
+                break
+            end
+        end
+        
+        if isFood then
+            task.spawn(function()
+                pcall(function()
+                    local targetPos = mainFirePos + Vector3.new(
+                        math.random(-2, 2), 
+                        Module.Vars.ITEM_HEIGHT, 
+                        math.random(-2, 2)
+                    )
+                    
+                    item:MoveTo(targetPos)
+                    itemDrag(item)
+                    movedCount = movedCount + 1
+                end)
+            end)
+            task.wait(Module.Vars.BRING_SPEED)
+        end
+    end
+end
+
+function Module.teleportFoodToPlayer()
+    local Character = LocalPlayer.Character
+    if not Character then return end
+    
+    local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+    if not HumanoidRootPart then return end
+    
+    local teleportedCount = 0
+    
+    for _, item in ipairs(Items:GetChildren()) do
+        local isFood = false
+        for _, foodName in ipairs(Module.Categories.FOOD_ITEMS) do
+            if item.Name == foodName then
+                isFood = true
+                break
+            end
+        end
+        
+        if isFood then
+            task.spawn(function()
+                pcall(function()
+                    local targetPos = HumanoidRootPart.Position + Vector3.new(
+                        math.random(-3, 3), 
+                        Module.Vars.ITEM_HEIGHT, 
+                        math.random(-3, 3)
+                    )
+                    
+                    item:MoveTo(targetPos)
+                    itemDrag(item)
+                    teleportedCount = teleportedCount + 1
+                end)
+            end)
+            task.wait(Module.Vars.BRING_SPEED)
+        end
+    end
+end
+
+function Module.autoEatFood()
+    if not Module.Vars.AUTO_EAT_ENABLED then return end
+    
+    local RequestConsumeItem = Module.Services.ReplicatedStorage.RemoteEvents:WaitForChild("RequestConsumeItem")
+    local eatenCount = 0
+    
+    for _, item in ipairs(Items:GetChildren()) do
+        if Module.Vars.AUTO_EAT_ENABLED then
+            local shouldEat = false
+            
+            if Module.Vars.SELECTED_FOOD_TO_EAT == "All Food" then
+                for _, foodName in ipairs(Module.Categories.FOOD_ITEMS) do
+                    if item.Name == foodName then
+                        shouldEat = true
+                        break
+                    end
+                end
+            else
+                shouldEat = (item.Name == Module.Vars.SELECTED_FOOD_TO_EAT)
+            end
+            
+            if shouldEat then
+                task.spawn(function()
+                    pcall(function()
+                        RequestConsumeItem:InvokeServer(item)
+                        eatenCount = eatenCount + 1
+                    end)
+                end)
+                task.wait(0.01)
+            end
+        else
+            break
+        end
+    end
+end
+
+function Module.autoCook(Fluent)
+    if not Module.Vars.AUTO_COOK_ENABLED then return end
+    
+    Module.moveFoodToMainFire()
+    
+    if Module.Vars.TELEPORT_TO_PLAYER_AFTER then
+        Fluent:Notify({
+            Title = "Waiting for Food Transfer",
+            Content = "Food will move to player in 5 seconds",
+            Duration = 5
+        })
+        task.wait(5)
+        Module.teleportFoodToPlayer()
+    end
+end
+
+function Module.teleportToMainFire()
+    local Character = LocalPlayer.Character
+    if not Character then return end
+    
+    local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+    if not HumanoidRootPart then return end
+    
+    local mainFirePos = Module.getMainFirePosition()
+    
+    pcall(function()
+        HumanoidRootPart.CFrame = CFrame.new(mainFirePos + Vector3.new(0, 5, 0))
+    end)
+end
+
+-- Coin Collection Functions
+Module.Remote = Module.Services.ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("RequestCollectCoints")
+Module.coinConnectionV1 = nil
+
+function Module.collectCoin(item)
+    if item.Name == "Coin Stack" then
+        Module.Remote:InvokeServer(item)
+    end
+end
+
+function Module.collectCoinsInstant()
+    for _, item in ipairs(Items:GetChildren()) do
+        Module.collectCoin(item)
+    end
+    
+    if Module.Vars.AUTO_COLLECT_COINS_ENABLED and Module.Vars.COIN_COLLECTION_METHOD == "Get Coins Instant" then
+        if Module.coinConnectionV1 then
+            Module.coinConnectionV1:Disconnect()
+        end
+        Module.coinConnectionV1 = Items.ChildAdded:Connect(function(item)
+            Module.collectCoin(item)
+        end)
+    end
+end
+
+function Module.bringCoinsToPlayer()
+    local TARGETITEM = "coin"
+    for _, item in ipairs(Items:GetChildren()) do
+        if string.find(string.lower(item.Name), TARGETITEM) then
+            task.spawn(function()
+                pcall(function()
+                    item:MoveTo(LocalPlayer.Character.HumanoidRootPart.Position + Vector3.new(0, 3, 0))
+                    itemDrag(item)
+                end)
+            end)
+        end
+    end
+end
+
+function Module.setupCoinAutoCollection()
+    if Module.coinConnectionV1 then
+        Module.coinConnectionV1:Disconnect()
+        Module.coinConnectionV1 = nil
+    end
+    
+    if Module.Vars.AUTO_COLLECT_COINS_ENABLED then
+        if Module.Vars.COIN_COLLECTION_METHOD == "Get Coins Instant" then
+            Module.collectCoinsInstant()
+        end
+    end
+end
+
+function Module.setupAutoLoot()
+    if Module.Vars.autoLootEnabled then
+        Items.ChildAdded:Connect(function(child)
+            if Module.Vars.autoLootEnabled then
+                task.wait(0.1)
+                Module.bringItem(child)
+            end
+        end)
+    end
+end
+
+-- God Mode Functions
+getgenv().onelinegodmode = getgenv().onelinegodmode or false
+
+function Module.applyGodmode(char)
+    if not char then return end
+    
+    local humanoid = char:WaitForChild("Humanoid", 5)
+    if not humanoid then return end
+    
+    humanoid.Changed:Connect(function(property)
+        if property == "Health" and humanoid.Health < 100 and getgenv().onelinegodmode then
+            pcall(function()
+                game:GetService("ReplicatedStorage").RemoteEvents.DamagePlayer:FireServer(-math.huge)
+            end)
+        end
+    end)
+end
+
+-- Character Update Handler
+function Module.setupCharacterHandlers()
+    LocalPlayer.CharacterAdded:Connect(function(newCharacter)
+        Character = newCharacter
+        HumanoidRootPart = newCharacter:WaitForChild("HumanoidRootPart")
+        Humanoid = newCharacter:WaitForChild("Humanoid")
+        Module.applyGodmode(newCharacter)
+    end)
+    
+    if LocalPlayer.Character then
+        Module.applyGodmode(LocalPlayer.Character)
+    end
+end
+
+-- Cleanup function
+function Module.cleanup()
+    if Module.diamondChestConnection then
+        Module.diamondChestConnection:Disconnect()
+    end
+    if Module.coinConnectionV1 then
+        Module.coinConnectionV1:Disconnect()
+    end
+    if Module.fullbrightConnection then
+        Module.fullbrightConnection:Disconnect()
+    end
+    Module.clearTreeMarkers()
+end
+
+return Module
