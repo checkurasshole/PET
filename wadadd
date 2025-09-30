@@ -1,873 +1,343 @@
--- Log Wall Builder Module - FIXED TRUE PREVIEW
--- This is the module script to upload to GitHub
-
-local WallBuilderModule = {}
+local LogWallBuilderModule = {}
 
 -- Services & Remotes
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
 
-function WallBuilderModule.new(WindUI)
-    local self = {}
+-- Configuration
+LogWallBuilderModule.Config = {
+    structureName = "Log Wall",
+    radius = 199,
+    numWalls = 199,
+    buildSpeed = 0,
+    isBuilding = false,
+    isPaused = false,
+    previewEnabled = true,
+    maxZoom = 400,
+    woodPerWall = 10,
+    verificationDelay = 0.2
+}
+
+-- Module state
+local previewFolder
+local connections = {}
+local isActive = true
+local structuresFolder
+local mainFire
+local inventory
+local CraftItem
+local RequestPlaceStructure
+
+function LogWallBuilderModule:Initialize()
+    -- Initialize services
+    CraftItem = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("CraftItem")
+    RequestPlaceStructure = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("RequestPlaceStructure")
+    inventory = player:WaitForChild("Inventory")
+    structuresFolder = workspace:WaitForChild("Structures")
+    mainFire = workspace.Map.Campground.MainFire.OuterTouchZone
     
-    -- Get services
-    local CraftItem = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("CraftItem")
-    local RequestPlaceStructure = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("RequestPlaceStructure")
-    local ClassStatUpdated = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ClassStatUpdated")
-    local player = Players.LocalPlayer
-    local inventory = player:WaitForChild("Inventory")
-    
-    -- Configuration
-    self.Config = {
-        structureName = "Log Wall",
-        radius = 6,
-        numWalls = 12,
-        buildSpeed = 0.1,
-        teleportToStructure = false,
-        isBuilding = false,
-        previewEnabled = true,
-        skyMode = false,
-        centerX = 0,
-        centerZ = 0,
-        centerY = 0,
-        tilt = 0,
-        maxZoom = 400,
-        woodPerWall = 10,
-        useAbsolutePosition = true  -- NEW: Use absolute positioning
-    }
-    
-    -- Initialize preview folder with unique name
-    local previewFolder = workspace:FindFirstChild("WallBuilderPreviewSystem")
+    -- Initialize preview folder
+    previewFolder = workspace:FindFirstChild("LogWallBuilderPreview")
     if previewFolder then previewFolder:Destroy() end
     previewFolder = Instance.new("Folder")
-    previewFolder.Name = "WallBuilderPreviewSystem"
+    previewFolder.Name = "LogWallBuilderPreview"
     previewFolder.Parent = workspace
     
-    local connections = {}
-    local isActive = true
-    local resourceButton, requiredButton
-    
-    -- Store the FIXED center position when preview is updated
-    local fixedCenterPosition = nil
-    
-    -- Resource tracking functions
-    function self.countAvailableLogs()
-        local count = 0
-        local itemsFolder = workspace:FindFirstChild("Items")
-        
-        if itemsFolder then
-            for _, item in pairs(itemsFolder:GetChildren()) do
-                if item.Name == "Log" then
-                    count = count + 1
-                end
+    -- Cleanup on player leave
+    table.insert(connections, game.Players.PlayerRemoving:Connect(function(plr)
+        if plr == player then 
+            isActive = false
+            self.Config.isBuilding = false
+            for _, connection in pairs(connections) do
+                connection:Disconnect()
+            end
+            if previewFolder then
+                previewFolder:Destroy()
             end
         end
-        return count
-    end
+    end))
+end
+
+function LogWallBuilderModule:CountAvailableLogs()
+    local count = 0
+    local itemsFolder = workspace:FindFirstChild("Items")
     
-    function self.getAvailableWood()
-        local woodTextLabel = workspace.Map.Campground.CraftingBench.WoodSign.SurfaceGui.TextLabel
-        local woodText = tostring(woodTextLabel.Text)
-        local woodCount = tonumber(woodText) or 0
-        return woodCount
-    end
-    
-    function self.updateResourceDisplay()
-        local availableLogs = self.countAvailableLogs()
-        local availableWood = self.getAvailableWood()
-        local totalWallsNeeded = self.Config.numWalls
-        local woodPerWall = self.Config.woodPerWall
-        local totalWoodNeeded = totalWallsNeeded * woodPerWall
-        local currentTime = os.date("%H:%M:%S")
-        
-        if resourceButton then
-            resourceButton:SetTitle("Available Resources")
-            resourceButton:SetDesc("Logs: " .. availableLogs .. " | Wood: " .. availableWood .. " | Updated: " .. currentTime)
-        end
-        
-        if requiredButton then
-            local hasEnoughWood = availableWood >= totalWoodNeeded
-            local status = hasEnoughWood and "✓ READY TO BUILD" or "✗ NEED MORE WOOD"
-            local missingWood = math.max(0, totalWoodNeeded - availableWood)
-            
-            local desc = "Building " .. totalWallsNeeded .. " walls × " .. woodPerWall .. " wood each\n"
-            desc = desc .. status
-            if missingWood > 0 then
-                desc = desc .. " • Missing: " .. missingWood .. " wood"
-                local logsNeededForWood = math.ceil(missingWood / 5)
-                desc = desc .. "\n(Need ~" .. logsNeededForWood .. " more logs to craft missing wood)"
-            else
-                desc = desc .. " • You have enough wood!"
+    if itemsFolder then
+        for _, item in pairs(itemsFolder:GetChildren()) do
+            if item.Name == "Log" then
+                count = count + 1
             end
-            
-            requiredButton:SetTitle("Required: " .. totalWoodNeeded .. " wood total")
-            requiredButton:SetDesc(desc)
         end
     end
+    return count
+end
+
+function LogWallBuilderModule:GetAvailableWood()
+    local woodTextLabel = workspace.Map.Campground.CraftingBench.WoodSign.SurfaceGui.TextLabel
+    local woodText = tostring(woodTextLabel.Text)
+    local woodCount = tonumber(woodText) or 0
+    return woodCount
+end
+
+function LogWallBuilderModule:CountLogWalls()
+    local count = 0
+    for _, structure in pairs(structuresFolder:GetChildren()) do
+        if structure.Name == "Log Wall" then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function LogWallBuilderModule:VerifyWallPlaced(expectedCount)
+    task.wait(self.Config.verificationDelay)
+    local currentCount = self:CountLogWalls()
+    return currentCount >= expectedCount
+end
+
+function LogWallBuilderModule:CreatePreviewPoint(position, index, total)
+    local part = Instance.new("Part")
+    part.Name = "PreviewPoint"
+    part.Size = Vector3.new(2, 15, 2)
+    part.Position = position
+    part.Material = Enum.Material.ForceField
+    part.Color = Color3.fromRGB(0, 180, 140)
+    part.Anchored = true
+    part.CanCollide = false
+    part.Transparency = 0.6
+    part.Parent = previewFolder
     
-    -- Preview Functions - NEW DESIGN
-    function self.createPreviewPoint(position, index)
-        -- Create main cylinder marker
-        local cylinder = Instance.new("Part")
-        cylinder.Name = "WallPreviewMarker_" .. index
-        cylinder.Size = Vector3.new(2, 14, 2)
-        cylinder.Position = position
-        cylinder.Material = Enum.Material.ForceField
-        cylinder.Color = Color3.fromRGB(100, 200, 255)
-        cylinder.Anchored = true
-        cylinder.CanCollide = false
-        cylinder.Transparency = 0.4
-        cylinder.Parent = previewFolder
+    local pointLight = Instance.new("PointLight")
+    pointLight.Brightness = 0.5
+    pointLight.Color = Color3.fromRGB(0, 180, 140)
+    pointLight.Range = 8
+    pointLight.Parent = part
+    
+    spawn(function()
+        while part.Parent do
+            local pulse = math.sin(tick() * 2 + index / total * math.pi * 2) * 0.15 + 0.85
+            part.Transparency = 0.6 + (1 - pulse) * 0.2
+            pointLight.Brightness = 0.3 + pulse * 0.3
+            task.wait(0.05)
+        end
+    end)
+    
+    return part
+end
+
+function LogWallBuilderModule:GetCenterPosition()
+    local firePos = mainFire.Position
+    local groundY = firePos.Y - 2
+    return Vector3.new(firePos.X, groundY, firePos.Z)
+end
+
+function LogWallBuilderModule:CalculateWallPositions()
+    local centerPos = self:GetCenterPosition()
+    local positions = {}
+    
+    for i = 1, self.Config.numWalls do
+        local angle = (i - 1) * (360 / self.Config.numWalls)
+        local angleRad = math.rad(angle)
         
-        -- Add spinning rings
-        local ring1 = Instance.new("Part")
-        ring1.Name = "Ring1"
-        ring1.Size = Vector3.new(6, 0.3, 6)
-        ring1.Shape = Enum.PartType.Cylinder
-        ring1.Position = position + Vector3.new(0, 5, 0)
-        ring1.Material = Enum.Material.Neon
-        ring1.Color = Color3.fromRGB(0, 255, 200)
-        ring1.Anchored = true
-        ring1.CanCollide = false
-        ring1.Transparency = 0.3
-        ring1.Orientation = Vector3.new(0, 0, 90)
-        ring1.Parent = previewFolder
+        local xOffset = math.sin(angleRad) * self.Config.radius
+        local zOffset = math.cos(angleRad) * self.Config.radius
         
-        local ring2 = Instance.new("Part")
-        ring2.Name = "Ring2"
-        ring2.Size = Vector3.new(4, 0.2, 4)
-        ring2.Shape = Enum.PartType.Cylinder
-        ring2.Position = position + Vector3.new(0, -5, 0)
-        ring2.Material = Enum.Material.Neon
-        ring2.Color = Color3.fromRGB(255, 100, 200)
-        ring2.Anchored = true
-        ring2.CanCollide = false
-        ring2.Transparency = 0.3
-        ring2.Orientation = Vector3.new(0, 0, 90)
-        ring2.Parent = previewFolder
+        local position = Vector3.new(
+            centerPos.X + xOffset,
+            centerPos.Y,
+            centerPos.Z + zOffset
+        )
         
-        -- Add beam to ground
-        local beam = Instance.new("Part")
-        beam.Name = "GroundBeam"
-        beam.Size = Vector3.new(0.5, 50, 0.5)
-        beam.Position = position
-        beam.Material = Enum.Material.Neon
-        beam.Color = Color3.fromRGB(255, 255, 100)
-        beam.Anchored = true
-        beam.CanCollide = false
-        beam.Transparency = 0.6
-        beam.Parent = previewFolder
-        
-        -- Add top glow sphere
-        local sphere = Instance.new("Part")
-        sphere.Name = "GlowSphere"
-        sphere.Size = Vector3.new(3, 3, 3)
-        sphere.Shape = Enum.PartType.Ball
-        sphere.Position = position + Vector3.new(0, 8, 0)
-        sphere.Material = Enum.Material.Neon
-        sphere.Color = Color3.fromRGB(150, 255, 150)
-        sphere.Anchored = true
-        sphere.CanCollide = false
-        sphere.Transparency = 0.5
-        sphere.Parent = previewFolder
-        
-        -- Add number label
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "NumberLabel"
-        billboard.Size = UDim2.new(0, 50, 0, 50)
-        billboard.StudsOffset = Vector3.new(0, 10, 0)
-        billboard.AlwaysOnTop = true
-        billboard.Parent = cylinder
-        
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, 0, 1, 0)
-        label.BackgroundTransparency = 1
-        label.Text = tostring(index)
-        label.TextColor3 = Color3.new(1, 1, 1)
-        label.TextScaled = true
-        label.Font = Enum.Font.GothamBold
-        label.Parent = billboard
-        
-        -- Animate the rings
-        spawn(function()
-            local rotation = 0
-            while cylinder and cylinder.Parent do
-                rotation = rotation + 2
-                if ring1 and ring1.Parent then
-                    ring1.Orientation = Vector3.new(0, rotation, 90)
-                end
-                if ring2 and ring2.Parent then
-                    ring2.Orientation = Vector3.new(0, -rotation * 1.5, 90)
-                end
-                if sphere and sphere.Parent then
-                    local pulse = 0.5 + math.sin(rotation * 0.1) * 0.2
-                    sphere.Transparency = pulse
-                end
-                task.wait(0.03)
+        table.insert(positions, position)
+    end
+    
+    return positions
+end
+
+function LogWallBuilderModule:UpdatePreview()
+    if not self.Config.previewEnabled then
+        for _, child in pairs(previewFolder:GetChildren()) do
+            child:Destroy()
+        end
+        return
+    end
+    
+    previewFolder:ClearAllChildren()
+    
+    local positions = self:CalculateWallPositions()
+    
+    for i, position in pairs(positions) do
+        self:CreatePreviewPoint(position, i, #positions)
+    end
+end
+
+function LogWallBuilderModule:ClearPreview()
+    previewFolder:ClearAllChildren()
+end
+
+function LogWallBuilderModule:GetLatestInventoryItem()
+    local items = inventory:GetChildren()
+    if #items == 0 then return nil end
+    return items[#items]
+end
+
+function LogWallBuilderModule:BuildCircle(structureName, onStatusUpdate)
+    if self.Config.isBuilding then
+        return false, "Already building"
+    end
+    
+    local availableWood = self:GetAvailableWood()
+    local neededWood = self.Config.numWalls * self.Config.woodPerWall
+    
+    if availableWood < neededWood then
+        return false, "Need " .. (neededWood - availableWood) .. " more wood"
+    end
+    
+    self.Config.isBuilding = true
+    self.Config.isPaused = false
+    
+    local centerPos = self:GetCenterPosition()
+    local positions = self:CalculateWallPositions()
+    local successCount = 0
+    local failCount = 0
+    local initialWallCount = self:CountLogWalls()
+    
+    if onStatusUpdate then
+        onStatusUpdate("started", {walls = self.Config.numWalls})
+    end
+    
+    for i, position in ipairs(positions) do
+        if not self.Config.isBuilding then 
+            if onStatusUpdate then
+                onStatusUpdate("cancelled", {wallNumber = i})
             end
-        end)
-        
-        return cylinder
-    end
-    
-    function self.applyTilt(points, tilt)
-        if tilt == 0 then return points end
-        
-        local tiltedPoints = {}
-        local cos_t = math.cos(math.rad(tilt))
-        local sin_t = math.sin(math.rad(tilt))
-        
-        for _, point in pairs(points) do
-            local x, y, z = point.X, point.Y, point.Z
-            local newY = y * cos_t - z * sin_t
-            local newZ = y * sin_t + z * cos_t
-            table.insert(tiltedPoints, Vector3.new(x, newY, newZ))
+            break 
         end
         
-        return tiltedPoints
-    end
-    
-    -- Get the CENTER position for building
-    function self.getAbsoluteCenterPosition()
-        local char = player.Character
-        if not char or not char:FindFirstChild("HumanoidRootPart") then
-            return Vector3.new(self.Config.centerX, self.Config.centerY, self.Config.centerZ)
+        while self.Config.isPaused do
+            task.wait(0.5)
         end
         
-        local root = char.HumanoidRootPart
+        CraftItem:InvokeServer(structureName)
+        task.wait(0.15)
         
-        -- If custom position is set (not 0,0,0), use it absolutely
-        if self.Config.centerX ~= 0 or self.Config.centerZ ~= 0 then
-            local yPos = self.Config.skyMode and 100 or (root.Position.Y + self.Config.centerY)
-            return Vector3.new(self.Config.centerX, yPos, self.Config.centerZ)
-        end
-        
-        -- Otherwise use player's current position
-        local yPos = self.Config.skyMode and 100 or (root.Position.Y + self.Config.centerY)
-        return Vector3.new(root.Position.X, yPos, root.Position.Z)
-    end
-    
-    -- Calculate where walls will ACTUALLY be placed
-    function self.calculateActualWallPositions(centerPos)
-        local positions = {}
-        
-        for i = 1, self.Config.numWalls do
-            local angle = (i - 1) * (360 / self.Config.numWalls)
-            local angleRad = math.rad(angle)
-            
-            local xOffset = math.sin(angleRad) * self.Config.radius
-            local zOffset = math.cos(angleRad) * self.Config.radius
-            
-            local position = Vector3.new(
-                centerPos.X + xOffset,
-                centerPos.Y,
-                centerPos.Z + zOffset
-            )
-            
-            if self.Config.tilt ~= 0 then
-                local relativePos = position - centerPos
-                local tiltedPoints = self.applyTilt({relativePos}, self.Config.tilt)
-                position = centerPos + tiltedPoints[1]
-            end
-            
-            table.insert(positions, position)
-        end
-        
-        return positions
-    end
-    
-    function self.updatePreview()
-        if not self.Config.previewEnabled then
-            for _, child in pairs(previewFolder:GetChildren()) do
-                child:Destroy()
-            end
-            fixedCenterPosition = nil
-            return
-        end
-        
-        previewFolder:ClearAllChildren()
-        
-        -- Store the center position when preview is created
-        fixedCenterPosition = self.getAbsoluteCenterPosition()
-        
-        -- Calculate exact positions where walls will be placed
-        local positions = self.calculateActualWallPositions(fixedCenterPosition)
-        
-        -- Create markers at each position
-        for i, position in pairs(positions) do
-            self.createPreviewPoint(position, i)
-        end
-        
-        -- Add center marker
-        local centerMarker = Instance.new("Part")
-        centerMarker.Name = "CenterMarker"
-        centerMarker.Size = Vector3.new(4, 1, 4)
-        centerMarker.Position = fixedCenterPosition
-        centerMarker.Material = Enum.Material.Neon
-        centerMarker.Color = Color3.fromRGB(255, 0, 0)
-        centerMarker.Anchored = true
-        centerMarker.CanCollide = false
-        centerMarker.Transparency = 0.3
-        centerMarker.Shape = Enum.PartType.Cylinder
-        centerMarker.Orientation = Vector3.new(0, 0, 90)
-        centerMarker.Parent = previewFolder
-        
-        -- Add label to center
-        local centerBillboard = Instance.new("BillboardGui")
-        centerBillboard.Size = UDim2.new(0, 100, 0, 50)
-        centerBillboard.StudsOffset = Vector3.new(0, 3, 0)
-        centerBillboard.AlwaysOnTop = true
-        centerBillboard.Parent = centerMarker
-        
-        local centerLabel = Instance.new("TextLabel")
-        centerLabel.Size = UDim2.new(1, 0, 1, 0)
-        centerLabel.BackgroundTransparency = 1
-        centerLabel.Text = "BUILD CENTER"
-        centerLabel.TextColor3 = Color3.new(1, 0, 0)
-        centerLabel.TextScaled = true
-        centerLabel.Font = Enum.Font.GothamBold
-        centerLabel.Parent = centerBillboard
-        
-        -- Add radius circle outline
-        for i = 1, 64 do
-            local angle = (i - 1) * (360 / 64)
-            local angleRad = math.rad(angle)
-            local xOff = math.sin(angleRad) * self.Config.radius
-            local zOff = math.cos(angleRad) * self.Config.radius
-            
-            local dot = Instance.new("Part")
-            dot.Name = "RadiusOutline"
-            dot.Size = Vector3.new(0.8, 0.3, 0.8)
-            dot.Position = fixedCenterPosition + Vector3.new(xOff, 0, zOff)
-            dot.Material = Enum.Material.Neon
-            dot.Color = Color3.fromRGB(255, 255, 0)
-            dot.Anchored = true
-            dot.CanCollide = false
-            dot.Transparency = 0.6
-            dot.Shape = Enum.PartType.Ball
-            dot.Parent = previewFolder
-        end
-    end
-    
-    function self.getLatestInventoryItem()
-        local items = inventory:GetChildren()
-        if #items == 0 then return nil end
-        return items[#items]
-    end
-    
-    function self.buildStructure(name, teleportToStructure)
-        local char = player.Character or player.CharacterAdded:Wait()
-        local root = char:WaitForChild("HumanoidRootPart")
-        
-        CraftItem:InvokeServer(name)
-        task.wait(0.2)
-        
-        local structureItem = self.getLatestInventoryItem()
+        local structureItem = self:GetLatestInventoryItem()
         if not structureItem then
-            warn("No structure item found in inventory for "..name)
-            return
+            failCount = failCount + 1
+            
+            if failCount >= 3 then
+                self.Config.isPaused = true
+                self.Config.isBuilding = false
+                
+                if onStatusUpdate then
+                    onStatusUpdate("placement_failed", {wallNumber = i})
+                end
+                
+                while self.Config.isPaused do
+                    task.wait(0.5)
+                end
+                
+                self.Config.isBuilding = true
+                failCount = 0
+            end
+            continue
         end
         
-        local placeCFrame = root.CFrame * CFrame.new(0, 0, -5)
-        local pos = placeCFrame.Position
+        local lookDirection = (centerPos - position).Unit
+        local rightVector = Vector3.new(0, 1, 0):Cross(lookDirection)
+        local upVector = lookDirection:Cross(rightVector)
+        
+        local wallCFrame = CFrame.fromMatrix(position, rightVector, upVector, lookDirection)
         
         local args = {
             structureItem,
             {
                 Valid = true,
-                CFrame = placeCFrame,
-                Position = pos
+                CFrame = wallCFrame,
+                Position = position
             },
-            placeCFrame
+            wallCFrame
         }
         
-        RequestPlaceStructure:InvokeServer(unpack(args))
-        firesignal(ClassStatUpdated.OnClientEvent, "Blacksmith", "BuildStructures", 13, 1)
-        
-        if teleportToStructure then
-            task.wait(0.5)
-            root.CFrame = placeCFrame * CFrame.new(0, 0, 3)
-        end
-    end
-    
-    function self.surroundCharacter(structureName)
-        if self.Config.isBuilding then
-            WindUI:Notify({
-                Title = "Already Building",
-                Content = "Please wait for current build to finish",
-                Icon = "alert-circle",
-                Duration = 3
-            })
-            return
-        end
-        
-        local availableWood = self.getAvailableWood()
-        local neededWood = self.Config.numWalls * self.Config.woodPerWall
-        
-        if availableWood < neededWood then
-            WindUI:Notify({
-                Title = "Not Enough Wood!",
-                Content = "Need " .. (neededWood - availableWood) .. " more wood",
-                Icon = "x-circle",
-                Duration = 5
-            })
-            return
-        end
-        
-        self.Config.isBuilding = true
-        
-        -- Use the FIXED center position from preview, or calculate new one
-        local buildCenterPosition = fixedCenterPosition or self.getAbsoluteCenterPosition()
-        
-        WindUI:Notify({
-            Title = "Building Started",
-            Content = "Placing " .. self.Config.numWalls .. " walls at fixed positions",
-            Icon = "hammer",
-            Duration = 2
-        })
-        
-        -- Calculate positions using the FIXED center
-        local positions = self.calculateActualWallPositions(buildCenterPosition)
-        local placedCount = 0
-        local failedCount = 0
-        
-        for i, position in ipairs(positions) do
-            if not self.Config.isBuilding then break end
-            
-            local success = pcall(function()
-                CraftItem:InvokeServer(structureName)
-            end)
-            
-            if not success then
-                failedCount = failedCount + 1
-                warn("Failed to craft " .. structureName .. " at index " .. i)
-                task.wait(0.1)
-                continue
-            end
-            
-            task.wait(0.25)
-            
-            local structureItem = self.getLatestInventoryItem()
-            if not structureItem then
-                warn("No structure item found for " .. structureName)
-                failedCount = failedCount + 1
-                task.wait(0.1)
-                continue
-            end
-            
-            -- Rotate wall to face inward toward center
-            local lookDirection = (buildCenterPosition - position).Unit
-            local rightVector = Vector3.new(0, 1, 0):Cross(lookDirection)
-            local upVector = lookDirection:Cross(rightVector)
-            
-            local wallCFrame = CFrame.fromMatrix(position, rightVector, upVector, lookDirection)
-            
-            local args = {
-                structureItem,
-                {
-                    Valid = true,
-                    CFrame = wallCFrame,
-                    Position = position
-                },
-                wallCFrame
-            }
-            
-            local placeSuccess = pcall(function()
-                RequestPlaceStructure:InvokeServer(unpack(args))
-            end)
-            
-            if placeSuccess then
-                placedCount = placedCount + 1
-            else
-                failedCount = failedCount + 1
-                warn("Failed to place " .. structureName .. " at index " .. i)
-            end
-            
-            task.wait(self.Config.buildSpeed)
-        end
-        
-        firesignal(ClassStatUpdated.OnClientEvent, "Blacksmith", "BuildStructures", 13, placedCount)
-        self.Config.isBuilding = false
-        
-        self.updateResourceDisplay()
-        
-        local resultMsg = "Placed " .. placedCount .. " walls"
-        if failedCount > 0 then
-            resultMsg = resultMsg .. " • Failed: " .. failedCount
-        end
-        
-        WindUI:Notify({
-            Title = "Building Complete!",
-            Content = resultMsg,
-            Icon = "check-circle",
-            Duration = 3
-        })
-    end
-    
-    function self.createUI()
-        WindUI:SetTheme("Dark")
-        
-        local Window = WindUI:CreateWindow({
-            Title = "Log Wall Builder Pro",
-            Icon = "hammer",
-            Author = "Build Tester Advanced",
-            Folder = "LogWallBuilderConfig",
-            Size = UDim2.fromOffset(450, 400),
-            Theme = "Dark",
-            Transparent = true,
-            SideBarWidth = 140,
-            HideSearchBar = false
-        })
-        
-        Window:Tag({
-            Title = "v3.0 FIXED",
-            Color = Color3.fromHex("#30ff6a"),
-            Radius = 5
-        })
-        
-        local MainTab = Window:Tab({
-            Title = "Builder",
-            Icon = "hammer"
-        })
-        
-        -- Resource display buttons
-        resourceButton = MainTab:Button({
-            Title = "Available Resources",
-            Desc = "Loading...",
-            Icon = "package",
-            Callback = function()
-                self.updateResourceDisplay()
-                WindUI:Notify({
-                    Title = "Resources Updated",
-                    Content = "Resource count refreshed",
-                    Icon = "refresh-cw",
-                    Duration = 2
-                })
-            end
-        })
-        
-        requiredButton = MainTab:Button({
-            Title = "Required Wood", 
-            Desc = "Calculating...",
-            Icon = "info",
-            Callback = function() end
-        })
-        
-        MainTab:Button({
-            Title = "Refresh Resources",
-            Desc = "Update resource counts",
-            Icon = "refresh-cw",
-            Callback = function()
-                self.updateResourceDisplay()
-                WindUI:Notify({
-                    Title = "Resources Updated",
-                    Content = "",
-                    Icon = "refresh-cw",
-                    Duration = 2
-                })
-            end
-        })
-        
-        -- Start resource tracking
-        spawn(function()
-            while isActive do
-                self.updateResourceDisplay()
-                wait(10)
-            end
+        local success = pcall(function()
+            RequestPlaceStructure:InvokeServer(unpack(args))
         end)
         
-        MainTab:Space()
-        
-        MainTab:Input({
-            Title = "Structure Name",
-            Desc = "Name of structure to build",
-            Placeholder = "Log Wall",
-            Value = self.Config.structureName,
-            Icon = "package",
-            Callback = function(value)
-                self.Config.structureName = value
+        if not success then
+            failCount = failCount + 1
+            
+            if failCount >= 3 then
+                self.Config.isPaused = true
+                self.Config.isBuilding = false
+                
+                if onStatusUpdate then
+                    onStatusUpdate("placement_failed", {wallNumber = i})
+                end
+                
+                while self.Config.isPaused do
+                    task.wait(0.5)
+                end
+                
+                self.Config.isBuilding = true
+                failCount = 0
             end
-        })
-        
-        MainTab:Space()
-        
-        MainTab:Slider({
-            Title = "Circle Radius",
-            Desc = "Distance from center",
-            Value = {
-                Min = 3,
-                Max = 300,
-                Default = self.Config.radius
-            },
-            Callback = function(value)
-                self.Config.radius = value
-                self.updatePreview()
-            end
-        })
-        
-        MainTab:Slider({
-            Title = "Number of Walls",
-            Desc = "How many walls in circle",
-            Value = {
-                Min = 4,
-                Max = 250,
-                Default = self.Config.numWalls
-            },
-            Callback = function(value)
-                self.Config.numWalls = value
-                self.updatePreview()
-                self.updateResourceDisplay()
-            end
-        })
-        
-        MainTab:Space()
-        
-        MainTab:Slider({
-            Title = "X Position",
-            Desc = "Center X coordinate (0 = player pos)",
-            Value = {
-                Min = -300,
-                Max = 300,
-                Default = self.Config.centerX
-            },
-            Callback = function(value)
-                self.Config.centerX = value
-                self.updatePreview()
-            end
-        })
-        
-        MainTab:Slider({
-            Title = "Z Position",
-            Desc = "Center Z coordinate (0 = player pos)",
-            Value = {
-                Min = -300,
-                Max = 300,
-                Default = self.Config.centerZ
-            },
-            Callback = function(value)
-                self.Config.centerZ = value
-                self.updatePreview()
-            end
-        })
-        
-        MainTab:Slider({
-            Title = "Y Position (Height)",
-            Desc = "Vertical offset",
-            Value = {
-                Min = -50,
-                Max = 100,
-                Default = self.Config.centerY
-            },
-            Callback = function(value)
-                self.Config.centerY = value
-                self.updatePreview()
-            end
-        })
-        
-        MainTab:Slider({
-            Title = "Tilt Angle",
-            Desc = "Rotate structure",
-            Value = {
-                Min = -90,
-                Max = 90,
-                Default = self.Config.tilt
-            },
-            Callback = function(value)
-                self.Config.tilt = value
-                self.updatePreview()
-            end
-        })
-        
-        MainTab:Space()
-        
-        MainTab:Slider({
-            Title = "Build Speed",
-            Desc = "Delay between placements",
-            Value = {
-                Min = 0.05,
-                Max = 2,
-                Default = self.Config.buildSpeed
-            },
-            Callback = function(value)
-                self.Config.buildSpeed = value
-            end
-        })
-        
-        MainTab:Slider({
-            Title = "Max Zoom Distance",
-            Desc = "Camera zoom limit",
-            Value = {
-                Min = 50,
-                Max = 2000,
-                Default = self.Config.maxZoom
-            },
-            Callback = function(value)
-                self.Config.maxZoom = value
-                player.CameraMaxZoomDistance = value
-            end
-        })
-        
-        MainTab:Space()
-        
-        MainTab:Toggle({
-            Title = "Show Preview",
-            Desc = "Display build preview",
-            Value = self.Config.previewEnabled,
-            Callback = function(state)
-                self.Config.previewEnabled = state
-                self.updatePreview()
-            end
-        })
-        
-        MainTab:Toggle({
-            Title = "Sky Mode",
-            Desc = "Build at high altitude (Y=100)",
-            Value = self.Config.skyMode,
-            Callback = function(state)
-                self.Config.skyMode = state
-                self.updatePreview()
-            end
-        })
-        
-        MainTab:Toggle({
-            Title = "Teleport to Structure",
-            Desc = "Teleport after single placement",
-            Value = self.Config.teleportToStructure,
-            Callback = function(state)
-                self.Config.teleportToStructure = state
-            end
-        })
-        
-        MainTab:Space()
-        
-        MainTab:Button({
-            Title = "🎯 Lock Preview Position",
-            Desc = "Set center to current location & lock it",
-            Icon = "map-pin",
-            Color = Color3.fromHex("#ff9800"),
-            Callback = function()
-                if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                    local pos = player.Character.HumanoidRootPart.Position
-                    self.Config.centerX = math.floor(pos.X)
-                    self.Config.centerZ = math.floor(pos.Z)
-                    self.updatePreview()
+        else
+            local expectedCount = initialWallCount + successCount + 1
+            local wasPlaced = self:VerifyWallPlaced(expectedCount)
+            
+            if wasPlaced then
+                successCount = successCount + 1
+                failCount = 0
+            else
+                failCount = failCount + 1
+                
+                if failCount >= 3 then
+                    self.Config.isPaused = true
+                    self.Config.isBuilding = false
                     
-                    WindUI:Notify({
-                        Title = "Position Locked!",
-                        Content = "Build center locked at current position",
-                        Icon = "map-pin",
-                        Duration = 2
-                    })
+                    if onStatusUpdate then
+                        onStatusUpdate("walls_not_appearing", {wallNumber = i})
+                    end
+                    
+                    while self.Config.isPaused do
+                        task.wait(0.5)
+                    end
+                    
+                    self.Config.isBuilding = true
+                    failCount = 0
+                    initialWallCount = self:CountLogWalls()
                 end
             end
-        })
+        end
         
-        MainTab:Button({
-            Title = "Clear Preview",
-            Desc = "Remove preview markers",
-            Icon = "trash-2",
-            Callback = function()
-                previewFolder:ClearAllChildren()
-                fixedCenterPosition = nil
-                WindUI:Notify({
-                    Title = "Preview Cleared",
-                    Content = "",
-                    Icon = "trash-2",
-                    Duration = 2
-                })
-            end
-        })
-        
-        MainTab:Space()
-        
-        MainTab:Button({
-            Title = "Place Single Structure",
-            Desc = "Place one structure in front",
-            Icon = "package",
-            Color = Color3.fromHex("#4a90e2"),
-            Callback = function()
-                self.buildStructure(self.Config.structureName, self.Config.teleportToStructure)
-                WindUI:Notify({
-                    Title = "Structure Placed",
-                    Content = "Placed " .. self.Config.structureName,
-                    Icon = "package",
-                    Duration = 2
-                })
-            end
-        })
-        
-        MainTab:Button({
-            Title = "Place Shelf (Teleport)",
-            Desc = "Quick shelf placement",
-            Icon = "box",
-            Color = Color3.fromHex("#9b59b6"),
-            Callback = function()
-                self.buildStructure("Shelf", true)
-                WindUI:Notify({
-                    Title = "Shelf Placed",
-                    Content = "Placed Shelf with teleport",
-                    Icon = "box",
-                    Duration = 2
-                })
-            end
-        })
-        
-        MainTab:Space()
-        
-        MainTab:Button({
-            Title = "🔨 BUILD AT PREVIEW POSITIONS",
-            Desc = "Build walls exactly where preview shows",
-            Icon = "circle",
-            Color = Color3.fromHex("#30ff6a"),
-            Callback = function()
-                self.surroundCharacter(self.Config.structureName)
-            end
-        })
-        
-        MainTab:Button({
-            Title = "STOP BUILDING",
-            Desc = "Cancel current build",
-            Icon = "square",
-            Color = Color3.fromHex("#ff4830"),
-            Callback = function()
-                self.Config.isBuilding = false
-                WindUI:Notify({
-                    Title = "Building Stopped",
-                    Content = "Build cancelled",
-                    Icon = "square",
-                    Duration = 2
-                })
-            end
-        })
-        
-        -- Cleanup on player leaving
-        table.insert(connections, game.Players.PlayerRemoving:Connect(function(plr)
-            if plr == player then 
-                isActive = false
-                self.Config.isBuilding = false
-                for _, connection in pairs(connections) do
-                    connection:Disconnect()
-                end
-                if previewFolder then
-                    previewFolder:Destroy()
-                end
-            end
-        end))
-        
-        -- Initial setup
-        self.updateResourceDisplay()
-        self.updatePreview()
-        
-        WindUI:Notify({
-            Title = "Script Loaded!",
-            Content = "TRUE PREVIEW - Walls build exactly where shown!",
-            Icon = "check-circle",
-            Duration = 3
-        })
+        if self.Config.buildSpeed > 0 then
+            task.wait(self.Config.buildSpeed)
+        end
     end
     
-    return self
+    self.Config.isBuilding = false
+    self.Config.isPaused = false
+    
+    if onStatusUpdate then
+        onStatusUpdate("complete", {successCount = successCount, total = self.Config.numWalls})
+    end
+    
+    return true, successCount
 end
 
-return WallBuilderModule
+function LogWallBuilderModule:StopBuilding()
+    self.Config.isBuilding = false
+    self.Config.isPaused = false
+end
+
+function LogWallBuilderModule:ContinueBuilding()
+    if self.Config.isPaused then
+        self.Config.isPaused = false
+        return true
+    end
+    return false
+end
+
+return LogWallBuilderModule
