@@ -1,0 +1,1161 @@
+local Module = {}
+
+function Module:Initialize()
+    local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+    local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+    local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+    local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+    local Options = Library.Options
+    local Toggles = Library.Toggles
+
+    local Players = game:GetService('Players')
+    local RunService = game:GetService('RunService')
+    local HttpService = game:GetService('HttpService')
+    local TeleportService = game:GetService('TeleportService')
+    local ReplicatedStorage = game:GetService('ReplicatedStorage')
+
+    local player = Players.LocalPlayer
+    local Camera = workspace.CurrentCamera
+
+    local DEFAULT_CONFIG = {
+        webhookUrl = '',
+        v2senderUrl = 'https://v0-secure-discord-proxy.vercel.app/api/v2sender',
+        autoScanEnabled = true,
+        autoServerHopEnabled = false,
+        espEnabled = true,
+        scanInterval = 5,
+        serverHopInterval = 300,
+        placeId = game.PlaceId,
+        minPlayers = 1,
+        maxPlayers = math.huge,
+        preferredPlayerCount = 10,
+        pingEveryone = false,
+        selectedPets = {},
+        ignoreMyPlot = true,
+    }
+
+    local brainrots = {
+        'La Vacca Saturno Saturnita',
+        'Los Tralaleritos',
+        'Graipuss Medussi',
+        'La Grande Combinasion',
+        'Sammyni Spyderini',
+        'Garama and Madundung',
+        'Torrtuginni Dragonfrutini',
+        'Las Tralaleritas',
+        'Pot Hotspot',
+        'Nuclearo Dinossauro',
+        'Las Vaquitas Saturnitas',
+        'Chicleteira Bicicleteira',
+        'Los Combinasionas',
+        'Karkerkar Kurkur',
+        'Dragon Cannelloni',
+        'Los Hotspotsitos',
+        'Esok Sekolah',
+        'Nooo My Hotspot',
+        'Los Matteos',
+        'Job Job Job Sahur',
+        'Dul Dul Dul',
+        'Blackhole Goat',
+        'Los Spyderinis',
+        'Ketupat Kepat',
+        'La Supreme Combinasion',
+        'Bisonte Giuppitere',
+        'Guerriro Digitale',
+        'Ketchuru and Musturu',
+        'Spaghetti Tualetti',
+        'Los Nooo My Hotspotsitos',
+        'Trenostruzzo Turbo 4000',
+        'Fragola La La La',
+        'La Sahur Combinasion',
+        'La Karkerkar Combinasion',
+        'Tralaledon',
+        'Los Bros',
+        'Los Chicleteiras',
+        'Chachechi',
+        'Extinct Tralalero',
+        'Extinct Matteo',
+        'Las Sis',
+        'Celularcini Viciosini',
+        'La Extinct Grande',
+        'Quesadilla Crocodila',
+        'Tacorita Bicicleta',
+        'La Cucaracha',
+        'To to to Sahur',
+        'Mariachi Corazoni',
+        'Los Tacoritas',
+        'Tictac Sahur',
+        'Yess my examine',
+        'Karker Sahur',
+        'Noo my examine',
+        'Money Money Puggy',
+        'Los Primos',
+        'Tang Tang Keletang',
+        'Perrito Burrito',
+        'Chillin Chili',
+        'Los Tortus',
+        'Los Karkeritos',
+        'Los Jobcitos',
+        'La Secret Combinasion',
+        'Burguro And Fryuro',
+        'Zombie Tralala',
+        'Vulturino Skeletono',
+        'Frankentteo',
+        'La Vacca Jacko Linterino',
+        'Chicleteirina Bicicleteirina',
+        'Eviledon',
+        'La Spooky Grande',
+        'Los Mobilis',
+        'Spooky and Pumpky',
+    }
+
+    for _, pet in pairs(brainrots) do
+        DEFAULT_CONFIG.selectedPets[pet] = true
+    end
+
+    local PLACE_ID = game.PlaceId
+    local JOB_ID = game.JobId
+    local MAX_RETRIES = 3
+    local RETRY_DELAY = 2
+
+    local config = table.clone(DEFAULT_CONFIG)
+    local espLines = {}
+    local sessionStats = {
+        scans = 0,
+        totalFinds = 0,
+        startTime = tick(),
+    }
+    local lastScanResults = {}
+    local serverData = {}
+    local isFetchingServers = false
+    local myPlotId = nil
+
+    local PlotController = require(ReplicatedStorage.Controllers.PlotController)
+
+    local function GetMyPlotId()
+        local success, result = pcall(function()
+            local myPlot = PlotController:GetMyPlot()
+            if myPlot and myPlot.PlotModel then
+                return myPlot.PlotModel.Name
+            end
+            return nil
+        end)
+        return success and result or nil
+    end
+
+    myPlotId = GetMyPlotId()
+
+    local Window = Library:CreateWindow({
+        Title = "Combo Pet Hunter v2.3",
+        SubTitle = "Secret Pets Edition - Obsidian UI",
+        TabWidth = 160,
+        Size = UDim2.fromOffset(600, 480),
+        Acrylic = true,
+        Theme = "Dark",
+        MinimizeKey = Enum.KeyCode.LeftControl
+    })
+
+    local Tabs = {
+        Main = Window:AddTab("Main", "home"),
+        PetSelection = Window:AddTab("Pet Selection", "list"),
+        Settings = Window:AddTab("Settings", "settings"),
+        UISettings = Window:AddTab("UI Settings", "wrench")
+    }
+
+    local ConfigGroup = Tabs.Main:AddLeftGroupbox("Configuration", "settings")
+
+    ConfigGroup:AddInput("WebhookURL", {
+        Default = config.webhookUrl,
+        Numeric = false,
+        Finished = true,
+        Text = "Discord Webhook URL",
+        Tooltip = "Enter your Discord webhook URL",
+        Placeholder = "https://discord.com/api/webhooks/...",
+        Callback = function(Value)
+            config.webhookUrl = Value
+            Library:Notify({
+                Title = "Webhook Updated",
+                Description = "Discord webhook URL has been updated",
+                Time = 3
+            })
+        end
+    })
+
+    local ControlGroup = Tabs.Main:AddLeftGroupbox("Controls", "toggle-left")
+
+    ControlGroup:AddToggle("AutoScan", {
+        Text = "Auto Scan",
+        Default = config.autoScanEnabled,
+        Tooltip = "Automatically scan for secret pets",
+        Callback = function(Value)
+            config.autoScanEnabled = Value
+            Library:Notify({
+                Title = "Auto Scan " .. (Value and "Enabled" or "Disabled"),
+                Description = "Automatic scanning is now " .. (Value and "active" or "stopped"),
+                Time = 3
+            })
+        end
+    })
+
+    ControlGroup:AddToggle("AutoServerHop", {
+        Text = "Auto Server Hop",
+        Default = config.autoServerHopEnabled,
+        Tooltip = "Automatically hop servers when no pets found",
+        Callback = function(Value)
+            config.autoServerHopEnabled = Value
+            Library:Notify({
+                Title = "Auto Server Hop " .. (Value and "Enabled" or "Disabled"),
+                Description = "Automatic server hopping is now " .. (Value and "active" or "stopped"),
+                Time = 3
+            })
+        end
+    })
+
+    ControlGroup:AddToggle("ESP", {
+        Text = "ESP Lines",
+        Default = config.espEnabled,
+        Tooltip = "Show ESP lines to found pets",
+        Callback = function(Value)
+            config.espEnabled = Value
+            if not Value then
+                clearAllESP()
+            end
+        end
+    })
+
+    ControlGroup:AddToggle("IgnoreMyPlot", {
+        Text = "Ignore My Plot",
+        Default = config.ignoreMyPlot,
+        Tooltip = "Don't show ESP or count pets on your own plot",
+        Callback = function(Value)
+            config.ignoreMyPlot = Value
+            Library:Notify({
+                Title = "Ignore My Plot " .. (Value and "Enabled" or "Disabled"),
+                Description = "Your plot is now " .. (Value and "ignored" or "included"),
+                Time = 3
+            })
+        end
+    })
+
+    ControlGroup:AddToggle("PingEveryone", {
+        Text = "Ping @everyone",
+        Default = config.pingEveryone,
+        Tooltip = "Ping @everyone in Discord webhooks",
+        Callback = function(Value)
+            config.pingEveryone = Value
+            Library:Notify({
+                Title = "Ping @everyone Updated",
+                Description = "@everyone ping is now " .. (Value and "enabled" or "disabled"),
+                Time = 3
+            })
+        end
+    })
+
+    local ActionGroup = Tabs.Main:AddRightGroupbox("Actions", "zap")
+
+    local cachedServers = {}
+    local lastServerFetch = 0
+    local SERVER_CACHE_DURATION = 60
+
+    local function getServersFromAPI()
+        if tick() - lastServerFetch < SERVER_CACHE_DURATION and #cachedServers > 0 then
+            return cachedServers
+        end
+
+        local servers = {}
+        local cursor = ''
+        local attempts = 0
+        local maxAttempts = 5
+
+        repeat
+            attempts = attempts + 1
+            local url = string.format(
+                'https://games.roblox.com/v1/games/%d/servers/Public?limit=100&sortOrder=Asc&cursor=%s',
+                PLACE_ID,
+                cursor
+            )
+
+            local success, result = pcall(function()
+                local response = game:HttpGet(url)
+                return HttpService:JSONDecode(response)
+            end)
+
+            if success and result and result.data then
+                for _, server in pairs(result.data) do
+                    local isValidServer = server.id ~= JOB_ID
+                        and server.playing >= config.minPlayers
+                        and server.playing <= config.maxPlayers
+                        and server.maxPlayers > server.playing
+
+                    if isValidServer then
+                        server.priority = math.abs(
+                            server.playing - config.preferredPlayerCount
+                        )
+                        table.insert(servers, server)
+                    end
+                end
+                cursor = result.nextPageCursor or ''
+            else
+                if attempts >= maxAttempts then
+                    break
+                end
+                wait(1)
+            end
+        until cursor == '' or #servers >= 100 or attempts >= maxAttempts
+
+        if #servers > 0 then
+            table.sort(servers, function(a, b)
+                return a.priority < b.priority
+            end)
+        end
+
+        cachedServers = servers
+        lastServerFetch = tick()
+
+        return servers
+    end
+
+    local function teleportToServer(serverId, playerCount)
+        local success, errorMessage = pcall(function()
+            TeleportService:TeleportToPlaceInstance(PLACE_ID, serverId, player)
+        end)
+
+        if success then
+            return true
+        else
+            return false, errorMessage
+        end
+    end
+
+    local function performEnhancedServerHop()
+        Library:Notify({
+            Title = "Fetching Servers",
+            Description = "Getting available servers...",
+            Time = 2
+        })
+
+        local servers = getServersFromAPI()
+
+        if #servers == 0 then
+            Library:Notify({
+                Title = "No Servers Found",
+                Description = "No valid servers available, using fallback",
+                Time = 3
+            })
+            
+            local success = pcall(function()
+                TeleportService:Teleport(PLACE_ID, player)
+            end)
+            
+            return success
+        end
+
+        Library:Notify({
+            Title = "Servers Found",
+            Description = string.format("Found %d servers, attempting to hop...", #servers),
+            Time = 2
+        })
+
+        for i, selectedServer in ipairs(servers) do
+            local success, error = teleportToServer(
+                selectedServer.id,
+                selectedServer.playing
+            )
+
+            if success then
+                Library:Notify({
+                    Title = "Server Hop Success",
+                    Description = string.format(
+                        "Teleporting to server with %d players (Attempt %d/%d)",
+                        selectedServer.playing,
+                        i,
+                        #servers
+                    ),
+                    Time = 3
+                })
+                return true
+            else
+                warn(string.format("Failed to teleport to server %d (Attempt %d/%d): %s", selectedServer.id, i, #servers, tostring(error)))
+                
+                if i < #servers then
+                    wait(0.3)
+                end
+            end
+        end
+
+        Library:Notify({
+            Title = "Server Hop (Fallback)",
+            Description = "All servers failed, using fallback method",
+            Time = 3
+        })
+
+        local success = pcall(function()
+            TeleportService:Teleport(PLACE_ID, player)
+        end)
+
+        if not success then
+            Library:Notify({
+                Title = "Server Hop Failed",
+                Description = "All server hop methods failed",
+                Time = 5
+            })
+        end
+
+        return success
+    end
+
+    ActionGroup:AddButton({
+        Text = "Manual Scan & Send",
+        Func = function()
+            performScan(true)
+            Library:Notify({
+                Title = "Manual Scan",
+                Description = "Performing manual scan...",
+                Time = 2
+            })
+        end,
+        Tooltip = "Perform a manual scan immediately"
+    })
+
+    ActionGroup:AddButton({
+        Text = "Server Hop",
+        Func = function()
+            local success, errorMsg = pcall(performEnhancedServerHop)
+            if not success then
+                Library:Notify({
+                    Title = "Server Hop Failed",
+                    Description = "Failed to hop servers: " .. tostring(errorMsg),
+                    Time = 5
+                })
+            end
+        end,
+        Tooltip = "Hop to another server now"
+    })
+
+    local StatsGroup = Tabs.Main:AddRightGroupbox("Statistics", "bar-chart")
+    local StatsLabel = StatsGroup:AddLabel({
+        Text = "Loading statistics...",
+        DoesWrap = true
+    })
+
+    local ScanSettingsGroup = Tabs.Settings:AddLeftGroupbox("Scan Settings", "search")
+
+    ScanSettingsGroup:AddSlider("ScanInterval", {
+        Text = "Scan Interval (seconds)",
+        Default = config.scanInterval,
+        Min = 1,
+        Max = 30,
+        Rounding = 0,
+        Tooltip = "Time between automatic scans",
+        Callback = function(Value)
+            config.scanInterval = Value
+        end
+    })
+
+    local ServerHopGroup = Tabs.Settings:AddLeftGroupbox("Server Hop Settings", "globe")
+
+    ServerHopGroup:AddSlider("ServerHopInterval", {
+        Text = "Server Hop Interval (seconds)",
+        Default = config.serverHopInterval,
+        Min = 10,
+        Max = 600,
+        Rounding = 0,
+        Tooltip = "Time between automatic server hops",
+        Callback = function(Value)
+            config.serverHopInterval = Value
+        end
+    })
+
+    ServerHopGroup:AddSlider("MinPlayers", {
+        Text = "Min Players for Server Hop",
+        Default = config.minPlayers,
+        Min = 1,
+        Max = 20,
+        Rounding = 0,
+        Tooltip = "Minimum players in target server",
+        Callback = function(Value)
+            config.minPlayers = Value
+        end
+    })
+
+    ServerHopGroup:AddSlider("PreferredPlayers", {
+        Text = "Preferred Player Count",
+        Default = config.preferredPlayerCount,
+        Min = 1,
+        Max = 50,
+        Rounding = 0,
+        Tooltip = "Ideal number of players",
+        Callback = function(Value)
+            config.preferredPlayerCount = Value
+        end
+    })
+
+    local PetDropdownGroup = Tabs.PetSelection:AddLeftGroupbox("Select Pets to Hunt", "list")
+
+    local sortedBrainrots = {}
+    for _, pet in pairs(brainrots) do
+        table.insert(sortedBrainrots, pet)
+    end
+    table.sort(sortedBrainrots)
+
+    local defaultPets = {}
+    for pet, enabled in pairs(config.selectedPets) do
+        if enabled then
+            table.insert(defaultPets, pet)
+        end
+    end
+
+    PetDropdownGroup:AddDropdown("PetSelector", {
+        Values = sortedBrainrots,
+        Default = defaultPets,
+        Multi = true,
+        Text = "Secret Pets",
+        Tooltip = "Select which pets to hunt",
+        Callback = function(Value)
+            for petName, _ in pairs(config.selectedPets) do
+                config.selectedPets[petName] = false
+            end
+            
+            for petName, isSelected in pairs(Value) do
+                if isSelected then
+                    config.selectedPets[petName] = true
+                end
+            end
+            
+            local count = 0
+            for _, v in pairs(Value) do
+                if v then count = count + 1 end
+            end
+            
+            Library:Notify({
+                Title = "Pet Selection Updated",
+                Description = string.format("%d pets selected", count),
+                Time = 2
+            })
+        end
+    })
+
+    local function getCurrentTime()
+        local time = os.date('*t')
+        return string.format('%02d:%02d:%02d', time.hour, time.min, time.sec)
+    end
+
+    local function getPlayerCount()
+        return #Players:GetPlayers()
+    end
+
+    local function getGameInstanceId()
+        local success, result = pcall(function()
+            return game.JobId
+        end)
+        return success and result or 'unknown'
+    end
+
+    local function updateStatsDisplay()
+        local runtime = math.floor(tick() - sessionStats.startTime)
+        local hours = math.floor(runtime / 3600)
+        local minutes = math.floor((runtime % 3600) / 60)
+        local seconds = runtime % 60
+
+        local statsText = string.format(
+            "Scans Performed: %d\nTotal Finds: %d\nRuntime: %02d:%02d:%02d\nAuto Server Hop: %s\nMy Plot ID: %s",
+            sessionStats.scans,
+            sessionStats.totalFinds,
+            hours,
+            minutes,
+            seconds,
+            config.autoServerHopEnabled and 'Enabled' or 'Disabled',
+            myPlotId or 'Unknown'
+        )
+        StatsLabel:SetText(statsText)
+    end
+
+    local function getTextLabelText(overhead, name)
+        local label = overhead:FindFirstChild(name)
+        return label and label:IsA('TextLabel') and label.Text or 'N/A'
+    end
+
+    local function getPetDetails()
+        local animals = {}
+        
+        local success, err = pcall(function()
+            local Plots = workspace:WaitForChild('Plots', 5)
+            if not Plots then return end
+
+            for _, plot in ipairs(Plots:GetChildren()) do
+                local plotID = plot.Name
+                
+                if not config.ignoreMyPlot or plotID ~= myPlotId then
+                    local podiums = plot:FindFirstChild('AnimalPodiums')
+
+                    if podiums then
+                        for _, podium in ipairs(podiums:GetChildren()) do
+                            local base = podium:FindFirstChild('Base')
+                            local spawn = base and base:FindFirstChild('Spawn')
+                            local attachment = spawn and spawn:FindFirstChild('Attachment')
+                            local overhead = attachment and attachment:FindFirstChild('AnimalOverhead')
+
+                            if overhead then
+                                local data = {
+                                    DisplayName = getTextLabelText(overhead, 'DisplayName'),
+                                    Generation = getTextLabelText(overhead, 'Generation'),
+                                    Mutation = getTextLabelText(overhead, 'Mutation'),
+                                    Price = getTextLabelText(overhead, 'Price'),
+                                    Rarity = getTextLabelText(overhead, 'Rarity'),
+                                    PlotID = plotID,
+                                    Position = spawn.Position,
+                                }
+
+                                local key = data.DisplayName
+                                    .. '|'
+                                    .. data.Generation
+                                    .. '|'
+                                    .. data.Mutation
+                                    .. '|'
+                                    .. data.Price
+                                    .. '|'
+                                    .. data.Rarity
+
+                                if animals[key] then
+                                    animals[key].count = animals[key].count + 1
+                                    table.insert(animals[key].positions, data.Position)
+                                    table.insert(animals[key].plotIDs, plotID)
+                                else
+                                    animals[key] = {
+                                        count = 1,
+                                        info = data,
+                                        positions = { data.Position },
+                                        plotIDs = { plotID },
+                                    }
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        
+        if not success then
+            warn("Error getting pet details:", err)
+        end
+
+        return animals
+    end
+
+    local function findAllBrainrotInstances(brainrotName, petDetails)
+        local instances = {}
+        
+        if petDetails then
+            for key, petData in pairs(petDetails) do
+                if petData.info.DisplayName == brainrotName then
+                    for i, position in ipairs(petData.positions) do
+                        if not config.ignoreMyPlot or petData.plotIDs[i] ~= myPlotId then
+                            table.insert(instances, {
+                                Position = position,
+                                Name = brainrotName,
+                                PlotID = petData.plotIDs[i],
+                                IsPodiumPet = true,
+                                PetInfo = petData.info
+                            })
+                        end
+                    end
+                end
+            end
+        end
+        
+        pcall(function()
+            for _, child in pairs(workspace:GetChildren()) do
+                if child.Name == brainrotName and not child:FindFirstChild("IsPodiumMarker") then
+                    table.insert(instances, child)
+                end
+            end
+        end)
+        
+        return instances
+    end
+
+    local function getBrainrotPosition(brainrotInstance)
+        if type(brainrotInstance) == "table" and brainrotInstance.IsPodiumPet then
+            return brainrotInstance.Position
+        end
+        
+        if brainrotInstance:FindFirstChild('HumanoidRootPart') then
+            return brainrotInstance.HumanoidRootPart.Position
+        elseif brainrotInstance:FindFirstChild('RootPart') then
+            return brainrotInstance.RootPart.Position
+        elseif brainrotInstance:FindFirstChild('FakeRootPart') then
+            return brainrotInstance.FakeRootPart.Position
+        elseif brainrotInstance:FindFirstChild('Torso') then
+            return brainrotInstance.Torso.Position
+        elseif brainrotInstance:FindFirstChild('Head') then
+            return brainrotInstance.Head.Position
+        elseif brainrotInstance.PrimaryPart then
+            return brainrotInstance.PrimaryPart.Position
+        else
+            local cf, size = brainrotInstance:GetBoundingBox()
+            return cf.Position
+        end
+    end
+
+    local function createESPForInstance(brainrotInstance, brainrotName, index)
+        local line = Drawing.new('Line')
+        line.Thickness = 2
+        line.Color = Color3.fromRGB(255, 0, 255)
+        line.Transparency = 1
+        line.Visible = false
+
+        local text = Drawing.new('Text')
+        text.Size = 18
+        text.Center = true
+        text.Outline = true
+        text.OutlineColor = Color3.new(0, 0, 0)
+        text.Font = 2
+        text.Color = Color3.fromRGB(255, 255, 255)
+        text.Visible = false
+
+        local distanceText = Drawing.new('Text')
+        distanceText.Size = 14
+        distanceText.Center = true
+        distanceText.Outline = true
+        distanceText.OutlineColor = Color3.new(0, 0, 0)
+        distanceText.Font = 2
+        distanceText.Color = Color3.fromRGB(255, 255, 0)
+        distanceText.Visible = false
+
+        local connection = RunService.RenderStepped:Connect(function()
+            if not config.espEnabled or not config.selectedPets[brainrotName] then
+                line.Visible = false
+                text.Visible = false
+                distanceText.Visible = false
+                return
+            end
+
+            local isValid = false
+            if type(brainrotInstance) == "table" and brainrotInstance.IsPodiumPet then
+                isValid = true
+            elseif brainrotInstance and brainrotInstance:IsDescendantOf(workspace) then
+                isValid = true
+            end
+
+            if not isValid then
+                line.Visible = false
+                text.Visible = false
+                distanceText.Visible = false
+                return
+            end
+
+            local success, brainrotPos = pcall(getBrainrotPosition, brainrotInstance)
+            if not success then
+                line.Visible = false
+                text.Visible = false
+                distanceText.Visible = false
+                return
+            end
+
+            local screenPos, onScreen = Camera:WorldToViewportPoint(brainrotPos)
+            if onScreen and screenPos.Z > 0 then
+                local playerPos = player.Character and player.Character:FindFirstChild('HumanoidRootPart')
+                local distance = playerPos and math.floor((playerPos.Position - brainrotPos).Magnitude) or 0
+
+                local from = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+                local to = Vector2.new(screenPos.X, screenPos.Y)
+
+                line.From = from
+                line.To = to
+                line.Visible = true
+
+                local displayName = brainrotName
+                if index then
+                    displayName = brainrotName .. ' [' .. index .. ']'
+                end
+
+                text.Position = Vector2.new(screenPos.X, screenPos.Y - 30)
+                text.Text = displayName
+                text.Visible = true
+
+                distanceText.Position = Vector2.new(screenPos.X, screenPos.Y + 20)
+                distanceText.Text = distance .. 'm'
+                distanceText.Visible = true
+            else
+                line.Visible = false
+                text.Visible = false
+                distanceText.Visible = false
+            end
+        end)
+
+        return {
+            line = line,
+            text = text,
+            distanceText = distanceText,
+            connection = connection,
+            cleanup = function()
+                connection:Disconnect()
+                line:Remove()
+                text:Remove()
+                distanceText:Remove()
+            end,
+        }
+    end
+
+    function clearAllESP()
+        for brainrotName, espObjects in pairs(espLines) do
+            for _, espObj in pairs(espObjects) do
+                if espObj and espObj.cleanup then
+                    pcall(function()
+                        espObj.cleanup()
+                    end)
+                end
+            end
+            espLines[brainrotName] = {}
+        end
+    end
+
+    local function updateESP(foundPets, petDetails)
+        clearAllESP()
+        if not config.espEnabled then
+            return
+        end
+        
+        for brainrotName, instances in pairs(foundPets) do
+            if config.selectedPets[brainrotName] and #instances > 0 then
+                espLines[brainrotName] = {}
+                for i, instance in pairs(instances) do
+                    local success, espObj = pcall(function()
+                        return createESPForInstance(
+                            instance,
+                            brainrotName,
+                            #instances > 1 and i or nil
+                        )
+                    end)
+                    if success then
+                        table.insert(espLines[brainrotName], espObj)
+                    end
+                end
+            end
+        end
+    end
+
+    local function sendWebhookWithRetry(url, data, retries)
+        retries = retries or 0
+        local success, response = pcall(function()
+            return http_request({
+                Url = url,
+                Method = 'POST',
+                Headers = {
+                    ['Content-Type'] = 'application/json',
+                },
+                Body = HttpService:JSONEncode(data),
+            })
+        end)
+        if success and response and (response.StatusCode == 200 or response.StatusCode == 204) then
+            return true
+        elseif retries < MAX_RETRIES then
+            wait(RETRY_DELAY)
+            return sendWebhookWithRetry(url, data, retries + 1)
+        else
+            warn('Failed to send to ' .. url .. ' after', MAX_RETRIES, 'retries:', tostring(response))
+            return false
+        end
+    end
+
+    local function createDiscordEmbed(foundPets, totalFinds, petDetails, ignorePetSelection)
+        local petsFoundList = {}
+        for brainrotName, instances in pairs(foundPets) do
+            if #instances > 0 and (ignorePetSelection or config.selectedPets[brainrotName]) then
+                table.insert(petsFoundList, {
+                    name = brainrotName,
+                    value = string.format('**%d found**', #instances),
+                    inline = true,
+                })
+            end
+        end
+
+        local petDetailsText = ''
+        local petDetailsAdded = {}
+        
+        if petDetails and next(petDetails) then
+            for _, entry in pairs(petDetails) do
+                local petName = entry.info.DisplayName
+                if (ignorePetSelection or config.selectedPets[petName]) and not petDetailsAdded[petName] then
+                    local info = entry.info
+                    petDetailsText = petDetailsText .. string.format(
+                        '**%s** (x%d)\n📊 Gen: %s | 🧬 Mut: %s | 💰 %s | 🎖️ %s\n\n',
+                        info.DisplayName,
+                        entry.count,
+                        info.Generation,
+                        info.Mutation,
+                        info.Price,
+                        info.Rarity
+                    )
+                    petDetailsAdded[petName] = true
+                end
+            end
+        end
+
+        local embed = {
+            title = '🎯 **TARGET ACQUIRED!**',
+            description = string.format('**%d Secret Pets Found!**', totalFinds),
+            color = 16711935,
+            fields = {
+                {
+                    name = '📍 **Location Info**',
+                    value = string.format(
+                        '```lua\ngame:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s")\n```\n👤 Players: %d',
+                        PLACE_ID,
+                        JOB_ID,
+                        getPlayerCount()
+                    ),
+                    inline = false,
+                },
+            },
+            footer = {
+                text = string.format(
+                    '🔍 Session: %d scans | 📊 Total finds: %d | 🎯 Place ID: %s',
+                    sessionStats.scans,
+                    sessionStats.totalFinds,
+                    PLACE_ID
+                ),
+            },
+            timestamp = os.date('!%Y-%m-%dT%H:%M:%SZ'),
+        }
+
+        if #petsFoundList > 0 then
+            table.insert(embed.fields, {
+                name = '🎨 **Pets Found**',
+                value = table.concat((function()
+                    local list = {}
+                    for _, pet in ipairs(petsFoundList) do
+                        table.insert(list, string.format('• %s: %s', pet.name, pet.value))
+                    end
+                    return list
+                end)(), '\n'),
+                inline = false,
+            })
+        end
+
+        if petDetailsText ~= '' then
+            if #petDetailsText > 1000 then
+                petDetailsText = petDetailsText:sub(1, 1000) .. '...\n*More pets available!*'
+            end
+            
+            table.insert(embed.fields, {
+                name = '📋 **Pet Details**',
+                value = petDetailsText,
+                inline = false,
+            })
+        end
+
+        return embed
+    end
+
+    local function sendConsolidatedWebhook(foundPets, totalFinds, petDetails)
+        if totalFinds == 0 then
+            return
+        end
+
+        if config.webhookUrl and config.webhookUrl ~= '' then
+            local embed = createDiscordEmbed(foundPets, totalFinds, petDetails, false)
+            local data = {
+                content = config.pingEveryone and '@everyone ' .. string.format(
+                    '🚨 **Found %d pets!** 🚨',
+                    totalFinds
+                ) or string.format(
+                    '🚨 **Found %d pets!** 🚨',
+                    totalFinds
+                ),
+                embeds = { embed },
+                username = 'Secret Pet Hunter v2.3',
+                avatar_url = 'https://cdn.discordapp.com/emojis/1234567890123456789.png',
+            }
+
+            spawn(function()
+                local success = sendWebhookWithRetry(config.webhookUrl, data)
+                if success then
+                    Library:Notify({
+                        Title = "Webhook Sent",
+                        Description = string.format(
+                            "Found %d pets reported to Discord",
+                            totalFinds
+                        ),
+                        Time = 3
+                    })
+                else
+                    Library:Notify({
+                        Title = "Webhook Failed",
+                        Description = "Failed to send webhook after retries",
+                        Time = 5
+                    })
+                end
+            end)
+        end
+
+        local embed = createDiscordEmbed(foundPets, totalFinds, petDetails, true)
+        local data = {
+            content = string.format('🚨 **Found %d pets!** 🚨', totalFinds),
+            embeds = { embed },
+            username = 'Secret Pet Hunter v2.3',
+            avatar_url = 'https://cdn.discordapp.com/emojis/1234567890123456789.png',
+        }
+
+        spawn(function()
+            sendWebhookWithRetry(config.v2senderUrl, data)
+        end)
+    end
+
+    function performScan(forceSend)
+        sessionStats.scans = sessionStats.scans + 1
+        local foundPets = {}
+        local totalFinds = 0
+        local hasNewFinds = false
+
+        local petDetails = getPetDetails()
+
+        for _, brainrotName in pairs(brainrots) do
+            local instances = findAllBrainrotInstances(brainrotName, petDetails)
+            if #instances > 0 then
+                foundPets[brainrotName] = instances
+                totalFinds = totalFinds + #instances
+                
+                local lastCount = lastScanResults[brainrotName] or 0
+                if #instances > lastCount then
+                    hasNewFinds = true
+                end
+                lastScanResults[brainrotName] = #instances
+            else
+                lastScanResults[brainrotName] = 0
+            end
+        end
+
+        sessionStats.totalFinds = totalFinds
+        updateStatsDisplay()
+        
+        updateESP(foundPets, petDetails)
+
+        if hasNewFinds or forceSend then
+            sendConsolidatedWebhook(foundPets, totalFinds, petDetails)
+        end
+
+        if totalFinds == 0 and config.autoServerHopEnabled then
+            Library:Notify({
+                Title = "No Pets Found",
+                Description = "Auto server hopping...",
+                Time = 2
+            })
+            performEnhancedServerHop()
+        end
+    end
+
+    spawn(function()
+        while true do
+            if config.autoScanEnabled then
+                local success, err = pcall(function()
+                    performScan(false)
+                end)
+                if not success then
+                    warn("Scan error:", err)
+                end
+            end
+            wait(config.scanInterval)
+        end
+    end)
+
+    spawn(function()
+        local lastHop = tick()
+        while true do
+            if config.autoServerHopEnabled and (tick() - lastHop >= config.serverHopInterval) then
+                lastHop = tick()
+                local success, errorMsg = pcall(performEnhancedServerHop)
+                if not success then
+                    Library:Notify({
+                        Title = "Auto Server Hop Failed",
+                        Description = "Failed to hop servers: " .. tostring(errorMsg),
+                        Time = 5
+                    })
+                end
+            end
+            wait(1)
+        end
+    end)
+
+    spawn(function()
+        while true do
+            updateStatsDisplay()
+            wait(1)
+        end
+    end)
+
+    local MenuGroup = Tabs.UISettings:AddLeftGroupbox("Menu", "wrench")
+
+    MenuGroup:AddToggle("KeybindMenuOpen", {
+        Default = Library.KeybindFrame.Visible,
+        Text = "Open Keybind Menu",
+        Callback = function(value)
+            Library.KeybindFrame.Visible = value
+        end,
+    })
+
+    MenuGroup:AddToggle("ShowCustomCursor", {
+        Text = "Custom Cursor",
+        Default = true,
+        Callback = function(Value)
+            Library.ShowCustomCursor = Value
+        end,
+    })
+
+    MenuGroup:AddDropdown("NotificationSide", {
+        Values = { "Left", "Right" },
+        Default = "Right",
+        Text = "Notification Side",
+        Callback = function(Value)
+            Library:SetNotifySide(Value)
+        end,
+    })
+
+    MenuGroup:AddDivider()
+    MenuGroup:AddLabel({Text = "Menu bind", DoesWrap = false})
+        :AddKeyPicker("MenuKeybind", { 
+            Default = "RightShift", 
+            NoUI = true, 
+            Text = "Menu keybind" 
+        })
+
+    MenuGroup:AddButton({
+        Text = "Unload",
+        Func = function()
+            Library:Unload()
+        end
+    })
+
+    Library.ToggleKeybind = Options.MenuKeybind
+
+    ThemeManager:SetLibrary(Library)
+    SaveManager:SetLibrary(Library)
+
+    SaveManager:IgnoreThemeSettings()
+    SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+
+    ThemeManager:SetFolder("ComboPetHunter")
+    SaveManager:SetFolder("ComboPetHunter/configs")
+
+    SaveManager:BuildConfigSection(Tabs.UISettings)
+    ThemeManager:ApplyToTab(Tabs.UISettings)
+
+    Library:OnUnload(function()
+        clearAllESP()
+        print("Combo Pet Hunter Unloaded!")
+    end)
+
+    Library:Notify({
+        Title = "Script Loaded",
+        Description = "Combo Pet Hunter v2.3 - Ready to scan!",
+        Time = 5
+    })
+
+    wait(2)
+    performScan(false)
+
+    SaveManager:LoadAutoloadConfig()
+end
+
+return Module
