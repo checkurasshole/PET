@@ -349,10 +349,13 @@ function Module.HoldProximityPrompt(prompt, holdTime)
     return success
 end
 
-function Module.SetupProximityPromptDetection(callback)
+function Module.SetupProximityDetection(callback)
+    local StarterGui = game:GetService("StarterGui")
+    local RunService = game:GetService("RunService")
+    
     local recent = {}
     local DEBOUNCE_TIME = 0.25
-
+    
     local function onPromptTriggered(prompt)
         if recent[prompt] then return end
         recent[prompt] = true
@@ -365,7 +368,7 @@ function Module.SetupProximityPromptDetection(callback)
             callback(prompt)
         end
     end
-
+    
     local function connectPrompt(prompt)
         if not prompt or not prompt:IsA("ProximityPrompt") then return end
         
@@ -375,13 +378,13 @@ function Module.SetupProximityPromptDetection(callback)
             end)
         end)
     end
-
+    
     for _, prompt in ipairs(workspace:GetDescendants()) do
         if prompt:IsA("ProximityPrompt") then
             connectPrompt(prompt)
         end
     end
-
+    
     workspace.DescendantAdded:Connect(function(desc)
         if desc:IsA("ProximityPrompt") then
             task.wait()
