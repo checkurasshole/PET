@@ -349,6 +349,47 @@ function Module.HoldProximityPrompt(prompt, holdTime)
     return success
 end
 
+function Module.SetupProximityPromptDetection(callback)
+    local recent = {}
+    local DEBOUNCE_TIME = 0.25
+
+    local function onPromptTriggered(prompt)
+        if recent[prompt] then return end
+        recent[prompt] = true
+        
+        task.delay(DEBOUNCE_TIME, function()
+            recent[prompt] = nil
+        end)
+        
+        if callback then
+            callback(prompt)
+        end
+    end
+
+    local function connectPrompt(prompt)
+        if not prompt or not prompt:IsA("ProximityPrompt") then return end
+        
+        pcall(function()
+            prompt.Triggered:Connect(function()
+                onPromptTriggered(prompt)
+            end)
+        end)
+    end
+
+    for _, prompt in ipairs(workspace:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") then
+            connectPrompt(prompt)
+        end
+    end
+
+    workspace.DescendantAdded:Connect(function(desc)
+        if desc:IsA("ProximityPrompt") then
+            task.wait()
+            connectPrompt(desc)
+        end
+    end)
+end
+
 function Module.WalkToTarget(character, targetPos)
     local root = character:FindFirstChild("HumanoidRootPart")
     local humanoid = character:FindFirstChild("Humanoid")
