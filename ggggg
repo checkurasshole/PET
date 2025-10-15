@@ -77,6 +77,18 @@ local function getTextLabelText(overhead, name)
     return label and label:IsA('TextLabel') and label.Text or 'N/A'
 end
 
+function PetHunterModule.CheckIfStolen()
+    local stolenFrame = player.PlayerGui:FindFirstChild("Stolen")
+    if not stolenFrame then return false end
+    
+    local statusLabel = stolenFrame:FindFirstChildOfClass("TextLabel", true)
+    if statusLabel and statusLabel.Text and statusLabel.Text:lower():find("fusing") then
+        return true
+    end
+    
+    return false
+end
+
 function PetHunterModule.GetPetDetails()
     local animals = {}
     local playerPlotId = PetHunterModule.GetMyPlotId()
