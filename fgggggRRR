@@ -57,8 +57,9 @@ Module.animalColors = {
 }
 Module.secretColor = Color3.fromRGB(255, 0, 255)
 
-local monitoredPrompts = {}
-local promptTriggeredCallback = nil
+local recent = {}
+local DEBOUNCE_TIME = 0.25
+local promptFiredCallback = nil
 
 function Module.InitAntiAFK()
     task.spawn(function()
@@ -149,33 +150,19 @@ function Module.GenerateReservedServerCode(placeId)
             return bit32.bor(bit32.lshift(x, n), bit32.rshift(x, 32 - n))
         end
 
-        local function F(x, y, z)
-            return bit32.bor(bit32.band(x, y), bit32.band(bit32.bnot(x), z))
-        end
-        local function G(x, y, z)
-            return bit32.bor(bit32.band(x, z), bit32.band(y, bit32.bnot(z)))
-        end
-        local function H(x, y, z)
-            return bit32.bxor(x, bit32.bxor(y, z))
-        end
-        local function I(x, y, z)
-            return bit32.bxor(y, bit32.bor(x, bit32.bnot(z)))
-        end
+        local function F(x, y, z) return bit32.bor(bit32.band(x, y), bit32.band(bit32.bnot(x), z)) end
+        local function G(x, y, z) return bit32.bor(bit32.band(x, z), bit32.band(y, bit32.bnot(z))) end
+        local function H(x, y, z) return bit32.bxor(x, bit32.bxor(y, z)) end
+        local function I(x, y, z) return bit32.bxor(y, bit32.bor(x, bit32.bnot(z))) end
 
         function md5.sum(message)
             local a, b, c, d = 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476
-
             local message_len = #message
             local padded_message = message .. "\128"
-            while #padded_message % 64 ~= 56 do
-                padded_message = padded_message .. "\0"
-            end
-
+            while #padded_message % 64 ~= 56 do padded_message = padded_message .. "\0" end
             local len_bytes = ""
             local len_bits = message_len * 8
-            for i = 0, 7 do
-                len_bytes = len_bytes .. string.char(bit32.band(bit32.rshift(len_bits, i * 8), 0xFF))
-            end
+            for i = 0, 7 do len_bytes = len_bytes .. string.char(bit32.band(bit32.rshift(len_bits, i * 8), 0xFF)) end
             padded_message = padded_message .. len_bytes
 
             for i = 1, #padded_message, 64 do
@@ -187,34 +174,19 @@ function Module.GenerateReservedServerCode(placeId)
                 end
 
                 local aa, bb, cc, dd = a, b, c, d
-
                 local s = { 7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21 }
 
                 for j = 0, 63 do
                     local f, k, shift_index
-                    if j < 16 then
-                        f = F(b, c, d)
-                        k = j
-                        shift_index = j % 4
-                    elseif j < 32 then
-                        f = G(b, c, d)
-                        k = (1 + 5 * j) % 16
-                        shift_index = 4 + (j % 4)
-                    elseif j < 48 then
-                        f = H(b, c, d)
-                        k = (5 + 3 * j) % 16
-                        shift_index = 8 + (j % 4)
-                    else
-                        f = I(b, c, d)
-                        k = (7 * j) % 16
-                        shift_index = 12 + (j % 4)
-                    end
+                    if j < 16 then f, k, shift_index = F(b, c, d), j, j % 4
+                    elseif j < 32 then f, k, shift_index = G(b, c, d), (1 + 5 * j) % 16, 4 + (j % 4)
+                    elseif j < 48 then f, k, shift_index = H(b, c, d), (5 + 3 * j) % 16, 8 + (j % 4)
+                    else f, k, shift_index = I(b, c, d), (7 * j) % 16, 12 + (j % 4) end
 
                     local temp = add(a, f)
                     temp = add(temp, X[k])
                     temp = add(temp, T[j + 1])
                     temp = rol(temp, s[shift_index + 1])
-
                     local new_b = add(b, temp)
                     a, b, c, d = d, new_b, b, c
                 end
@@ -227,22 +199,16 @@ function Module.GenerateReservedServerCode(placeId)
 
             local function to_le_hex(n)
                 local s = ""
-                for i = 0, 3 do
-                    s = s .. string.char(bit32.band(bit32.rshift(n, i * 8), 0xFF))
-                end
+                for i = 0, 3 do s = s .. string.char(bit32.band(bit32.rshift(n, i * 8), 0xFF)) end
                 return s
             end
-
             return to_le_hex(a) .. to_le_hex(b) .. to_le_hex(c) .. to_le_hex(d)
         end
     end
 
     do
         function hmac.new(key, msg, hash_func)
-            if #key > 64 then
-                key = hash_func(key)
-            end
-
+            if #key > 64 then key = hash_func(key) end
             local o_key_pad = ""
             local i_key_pad = ""
             for i = 1, 64 do
@@ -250,30 +216,22 @@ function Module.GenerateReservedServerCode(placeId)
                 o_key_pad = o_key_pad .. string.char(bit32.bxor(byte, 0x5C))
                 i_key_pad = i_key_pad .. string.char(bit32.bxor(byte, 0x36))
             end
-
             return hash_func(o_key_pad .. hash_func(i_key_pad .. msg))
         end
     end
 
     do
         local b = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
         function base64.encode(data)
             return (
                 (data:gsub(".", function(x)
                     local r, b_val = "", x:byte()
-                    for i = 8, 1, -1 do
-                        r = r .. (b_val % 2 ^ i - b_val % 2 ^ (i - 1) > 0 and "1" or "0")
-                    end
+                    for i = 8, 1, -1 do r = r .. (b_val % 2 ^ i - b_val % 2 ^ (i - 1) > 0 and "1" or "0") end
                     return r
                 end) .. "0000"):gsub("%d%d%d?%d?%d?%d?", function(x)
-                    if #x < 6 then
-                        return ""
-                    end
+                    if #x < 6 then return "" end
                     local c = 0
-                    for i = 1, 6 do
-                        c = c + (x:sub(i, i) == "1" and 2 ^ (6 - i) or 0)
-                    end
+                    for i = 1, 6 do c = c + (x:sub(i, i) == "1" and 2 ^ (6 - i) or 0) end
                     return b:sub(c + 1, c + 1)
                 end) .. ({ "", "==", "=" })[#data % 3 + 1]
             )
@@ -281,17 +239,12 @@ function Module.GenerateReservedServerCode(placeId)
     end
 
     local uuid = {}
-    for i = 1, 16 do
-        uuid[i] = math.random(0, 255)
-    end
-
+    for i = 1, 16 do uuid[i] = math.random(0, 255) end
     uuid[7] = bit32.bor(bit32.band(uuid[7], 0x0F), 0x40)
     uuid[9] = bit32.bor(bit32.band(uuid[9], 0x3F), 0x80)
 
     local firstBytes = ""
-    for i = 1, 16 do
-        firstBytes = firstBytes .. string.char(uuid[i])
-    end
+    for i = 1, 16 do firstBytes = firstBytes .. string.char(uuid[i]) end
 
     local placeIdBytes = ""
     local pIdRec = placeId
@@ -301,21 +254,14 @@ function Module.GenerateReservedServerCode(placeId)
     end
 
     local content = firstBytes .. placeIdBytes
-
     local SUPERDUPERSECRETROBLOXKEYTHATTHEYDIDNTCHANGEEVERSINCEFOREVER = "e4Yn8ckbCJtw2sv7qmbg"
     local signature = hmac.new(SUPERDUPERSECRETROBLOXKEYTHATTHEYDIDNTCHANGEEVERSINCEFOREVER, content, md5.sum)
-
     local accessCodeBytes = signature .. content
-
     local accessCode = base64.encode(accessCodeBytes)
     accessCode = accessCode:gsub("+", "-"):gsub("/", "_")
 
     local pdding = 0
-    accessCode, _ = accessCode:gsub("=", function()
-        pdding = pdding + 1
-        return ""
-    end)
-
+    accessCode, _ = accessCode:gsub("=", function() pdding = pdding + 1 return "" end)
     accessCode = accessCode .. tostring(pdding)
 
     return accessCode
@@ -325,64 +271,57 @@ function Module.GetAnimalInfo(model)
     local success, info = pcall(function()
         local overhead = model:FindFirstChild("Part") and model.Part:FindFirstChild("Info") and model.Part.Info:FindFirstChild("AnimalOverhead")
         if not overhead then return nil end
-        return {
-            Name = overhead:FindFirstChild("DisplayName") and overhead.DisplayName.Text or "?"
-        }
+        return { Name = overhead:FindFirstChild("DisplayName") and overhead.DisplayName.Text or "?" }
     end)
     return success and info or nil
 end
 
 function Module.GetProximityPrompt(model)
     local promptAttachment = model:FindFirstChild("Part") and model.Part:FindFirstChild("PromptAttachment")
-    if promptAttachment then
-        return promptAttachment:FindFirstChild("ProximityPrompt")
-    end
+    if promptAttachment then return promptAttachment:FindFirstChild("ProximityPrompt") end
     return nil
 end
 
 function Module.HoldProximityPrompt(prompt, holdTime)
     if not prompt then return false end
-    
-    local success = pcall(function()
+    pcall(function()
         prompt:InputHoldBegin()
         task.wait(holdTime + 0.1)
         prompt:InputHoldEnd()
-        
-        -- FIRE THE CALLBACK WHEN PROMPT COMPLETES
-        if promptTriggeredCallback then
-            promptTriggeredCallback(prompt)
-        end
     end)
-    
-    return success
+    return true
 end
 
 function Module.SetupProximityDetection(callback)
-    promptTriggeredCallback = callback
+    promptFiredCallback = callback
+    
+    local function onPromptTriggered(prompt)
+        if recent[prompt] then return end
+        recent[prompt] = true
+        delay(DEBOUNCE_TIME, function() recent[prompt] = nil end)
+        
+        if promptFiredCallback then
+            promptFiredCallback(prompt)
+        end
+    end
     
     local function connectPrompt(prompt)
         if not prompt or not prompt:IsA("ProximityPrompt") then return end
-        if monitoredPrompts[prompt] then return end
-        
-        monitoredPrompts[prompt] = true
+        pcall(function()
+            prompt.Triggered:Connect(function()
+                onPromptTriggered(prompt)
+            end)
+        end)
     end
     
     for _, prompt in ipairs(workspace:GetDescendants()) do
-        if prompt:IsA("ProximityPrompt") then
-            connectPrompt(prompt)
-        end
+        if prompt:IsA("ProximityPrompt") then connectPrompt(prompt) end
     end
     
     workspace.DescendantAdded:Connect(function(desc)
         if desc:IsA("ProximityPrompt") then
-            task.wait()
+            if RunService.Heartbeat:Wait() then end
             connectPrompt(desc)
-        end
-    end)
-    
-    workspace.DescendantRemoving:Connect(function(desc)
-        if desc:IsA("ProximityPrompt") then
-            monitoredPrompts[desc] = nil
         end
     end)
 end
@@ -390,7 +329,6 @@ end
 function Module.WalkToTarget(character, targetPos)
     local root = character:FindFirstChild("HumanoidRootPart")
     local humanoid = character:FindFirstChild("Humanoid")
-    
     if not root or not humanoid then return end
 
     local path = PathfindingService:CreatePath({
@@ -410,10 +348,8 @@ function Module.WalkToTarget(character, targetPos)
     end
 
     local waypoints = path:GetWaypoints()
-    
     for i = 1, #waypoints do
         if not character.Parent then break end
-        
         local wp = waypoints[i]
         humanoid:MoveTo(wp.Position)
         
@@ -424,7 +360,6 @@ function Module.WalkToTarget(character, targetPos)
             if timeout > 10 then break end
         end
     end
-    
     task.wait(0.5)
 end
 
@@ -460,7 +395,6 @@ end
 
 function Module.CreateHighlights(name, model)
     local highlights = {}
-    
     for _, child in pairs(model:GetChildren()) do
         if child:IsA("Model") and child.Name ~= "Part" then
             for _, part in pairs(child:GetDescendants()) do
@@ -492,7 +426,6 @@ function Module.CreateHighlights(name, model)
             end
         end
     end
-    
     return highlights
 end
 
@@ -500,9 +433,7 @@ function Module.CleanupESP(esp)
     if esp.Billboard then esp.Billboard:Destroy() end
     if esp.Tracer then esp.Tracer:Remove() end
     if esp.Highlights then
-        for _, highlight in pairs(esp.Highlights) do
-            highlight:Destroy()
-        end
+        for _, highlight in pairs(esp.Highlights) do highlight:Destroy() end
     end
 end
 
