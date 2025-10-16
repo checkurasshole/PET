@@ -5,6 +5,7 @@ local RunService = game:GetService("RunService")
 local PathfindingService = game:GetService("PathfindingService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
 
 local player = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -350,8 +351,7 @@ function Module.HoldProximityPrompt(prompt, holdTime)
 end
 
 function Module.SetupProximityDetection(callback)
-    local StarterGui = game:GetService("StarterGui")
-    local RunService = game:GetService("RunService")
+    shared.PromptFired = Instance.new("BindableEvent")
     
     local recent = {}
     local DEBOUNCE_TIME = 0.25
@@ -363,6 +363,8 @@ function Module.SetupProximityDetection(callback)
         task.delay(DEBOUNCE_TIME, function()
             recent[prompt] = nil
         end)
+        
+        shared.PromptFired:Fire(prompt)
         
         if callback then
             callback(prompt)
