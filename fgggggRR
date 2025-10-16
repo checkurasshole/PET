@@ -57,9 +57,8 @@ Module.animalColors = {
 }
 Module.secretColor = Color3.fromRGB(255, 0, 255)
 
--- Track which prompts we're monitoring
 local monitoredPrompts = {}
-local promptCallbacks = {}
+local promptTriggeredCallback = nil
 
 function Module.InitAntiAFK()
     task.spawn(function()
@@ -348,38 +347,32 @@ function Module.HoldProximityPrompt(prompt, holdTime)
         prompt:InputHoldBegin()
         task.wait(holdTime + 0.1)
         prompt:InputHoldEnd()
+        
+        -- FIRE THE CALLBACK WHEN PROMPT COMPLETES
+        if promptTriggeredCallback then
+            promptTriggeredCallback(prompt)
+        end
     end)
     
     return success
 end
 
 function Module.SetupProximityDetection(callback)
-    -- This function now properly tracks when prompts fire
+    promptTriggeredCallback = callback
     
     local function connectPrompt(prompt)
         if not prompt or not prompt:IsA("ProximityPrompt") then return end
         if monitoredPrompts[prompt] then return end
         
         monitoredPrompts[prompt] = true
-        
-        pcall(function()
-            prompt.Triggered:Connect(function()
-                -- When a prompt is triggered, call the callback
-                if callback then
-                    callback(prompt)
-                end
-            end)
-        end)
     end
     
-    -- Connect all existing prompts
     for _, prompt in ipairs(workspace:GetDescendants()) do
         if prompt:IsA("ProximityPrompt") then
             connectPrompt(prompt)
         end
     end
     
-    -- Listen for new prompts
     workspace.DescendantAdded:Connect(function(desc)
         if desc:IsA("ProximityPrompt") then
             task.wait()
@@ -387,7 +380,6 @@ function Module.SetupProximityDetection(callback)
         end
     end)
     
-    -- Clean up dead prompts
     workspace.DescendantRemoving:Connect(function(desc)
         if desc:IsA("ProximityPrompt") then
             monitoredPrompts[desc] = nil
