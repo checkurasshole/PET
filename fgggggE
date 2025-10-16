@@ -57,6 +57,11 @@ Module.animalColors = {
 }
 Module.secretColor = Color3.fromRGB(255, 0, 255)
 
+-- Tracking state for auto walk
+Module.completedAnimals = {}
+Module.currentTargetAnimal = nil
+Module.isHoldingPrompt = false
+
 function Module.InitAntiAFK()
     task.spawn(function()
         while true do
@@ -432,6 +437,106 @@ function Module.WalkToTarget(character, targetPos)
     end
     
     task.wait(0.5)
+end
+
+function Module.FindClosestAnimal(animalSettings)
+    local character = player.Character
+    if not character then return nil end
+    
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    
+    local closestAnimal = nil
+    local closestDistance = math.huge
+    
+    for _, obj in pairs(workspace:GetChildren()) do
+        if Module.completedAnimals[obj] then continue end
+        if obj:FindFirstChild("Part") and obj.Part:FindFirstChild("Info") then
+            local info = Module.GetAnimalInfo(obj)
+            if info and animalSettings[info.Name] then
+                local targetPart = obj:FindFirstChild("Part")
+                if targetPart then
+                    local distance = (root.Position - targetPart.Position).Magnitude
+                    if distance < closestDistance then
+                        closestDistance = distance
+                        closestAnimal = obj
+                    end
+                end
+            end
+        end
+    end
+    
+    return closestAnimal
+end
+
+function Module.WalkToAnimalContinuous(animalModel, animalSettings, autoWalkEnabled, receivedNotification)
+    local character = player.Character
+    if not character then return end
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not root then return end
+    
+    local targetPart = animalModel:FindFirstChild("Part")
+    if not targetPart then return end
+    
+    Module.currentTargetAnimal = animalModel
+    
+    local prompt = Module.GetProximityPrompt(animalModel)
+    if not prompt then return end
+    
+    local lastPathTime = 0
+    local pathUpdateInterval = 0.5
+    
+    while autoWalkEnabled() and animalModel.Parent and Module.currentTargetAnimal == animalModel and not receivedNotification() do
+        local currentTime = tick()
+        local distance = (root.Position - targetPart.Position).Magnitude
+        
+        if currentTime - lastPathTime >= pathUpdateInterval or distance > 50 then
+            task.spawn(function()
+                local path = PathfindingService:CreatePath({
+                    AgentRadius = 2,
+                    AgentHeight = 5,
+                    AgentCanJump = true,
+                    AgentCanClimb = true,
+                    WaypointSpacing = 2
+                })
+                
+                path:ComputeAsync(root.Position, targetPart.Position)
+                
+                if path.Status == Enum.PathStatus.Success and autoWalkEnabled() and Module.currentTargetAnimal == animalModel then
+                    local waypoints = path:GetWaypoints()
+                    
+                    for i = 1, math.min(5, #waypoints) do
+                        if not autoWalkEnabled() or not animalModel.Parent or Module.currentTargetAnimal ~= animalModel then break end
+                        local wp = waypoints[i]
+                        humanoid:MoveTo(wp.Position)
+                        task.wait(0.05)
+                    end
+                end
+            end)
+            
+            lastPathTime = currentTime
+        else
+            humanoid:MoveTo(targetPart.Position)
+        end
+        
+        if distance <= (prompt.MaxActivationDistance or 10) and not Module.isHoldingPrompt then
+            Module.isHoldingPrompt = true
+            
+            task.spawn(function()
+                Module.HoldProximityPrompt(prompt, prompt.HoldDuration or 1)
+                task.wait(0.5)
+                Module.isHoldingPrompt = false
+            end)
+        end
+        
+        task.wait(0.05)
+    end
+end
+
+function Module.ClearCompletedAnimals()
+    Module.completedAnimals = {}
 end
 
 function Module.CreateTracer(name)
