@@ -558,10 +558,6 @@ function PetHunterModule.ServerHop(config, onNotify)
     
     repeat
         attemptCount = attemptCount + 1
-        
-        if onNotify then
-        onNotify("Server Hop", "Searching for server...", 2)
-    end
 
         local servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
 
@@ -574,24 +570,20 @@ function PetHunterModule.ServerHop(config, onNotify)
         if #servers == 0 then
             if attemptCount >= MAX_SERVERHOP_FAILS then
                 if onNotify then
-                    onNotify("Server Hop Failed", "Failed " .. MAX_SERVERHOP_FAILS .. " times. Kicking...", 5)
+                    onNotify("Server Hop Failed", "Failed to find servers. Kicking...", 5)
                 end
                 
                 pcall(function()
                     StarterGui:SetCore("SendNotification", {
                         Title = "⚠️ SERVER HOP FAILED",
-                        Text = "Kicked after " .. MAX_SERVERHOP_FAILS .. " failed attempts.\nPlease rejoin the game to continue.",
+                        Text = "Kicked after multiple failed attempts.\nPlease rejoin the game to continue.",
                         Duration = 10,
                     })
                 end)
                 
                 wait(2)
-                player:Kick("❌ Server hop failed " .. MAX_SERVERHOP_FAILS .. " times.\n\n✅ Please rejoin the game for server hopping to work properly again.\n\n🔄 This is normal and helps reset the connection.")
+                player:Kick("❌ Server hop failed.\n\n✅ Please rejoin the game for server hopping to work properly again.\n\n🔄 This is normal and helps reset the connection.")
                 return false
-            end
-            
-            if onNotify then
-                onNotify("Server Hop", "No servers found", 2)
             end
             
             wait(1)
@@ -611,24 +603,20 @@ function PetHunterModule.ServerHop(config, onNotify)
             if not teleportSuccess then
                 if attemptCount >= MAX_SERVERHOP_FAILS then
                     if onNotify then
-                        onNotify("Server Hop Failed", "Failed " .. MAX_SERVERHOP_FAILS .. " times. Kicking...", 5)
+                        onNotify("Server Hop Failed", "Failed to teleport. Kicking...", 5)
                     end
                     
                     pcall(function()
                         StarterGui:SetCore("SendNotification", {
                             Title = "⚠️ SERVER HOP FAILED",
-                            Text = "Kicked after " .. MAX_SERVERHOP_FAILS .. " failed attempts.\nPlease rejoin the game to continue.",
+                            Text = "Kicked after multiple failed attempts.\nPlease rejoin the game to continue.",
                             Duration = 10,
                         })
                     end)
                     
                     wait(2)
-                    player:Kick("❌ Server hop failed " .. MAX_SERVERHOP_FAILS .. " times.\n\n✅ Please rejoin the game for server hopping to work properly again.\n\n🔄 This is normal and helps reset the connection.")
+                    player:Kick("❌ Server hop failed.\n\n✅ Please rejoin the game for server hopping to work properly again.\n\n🔄 This is normal and helps reset the connection.")
                     return false
-                end
-                
-                if onNotify then
-                    onNotify("Server Hop", "Teleport failed", 2)
                 end
                 
                 wait(1)
