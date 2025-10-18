@@ -51,8 +51,8 @@ local FlyModule = {
     enabled = false,
     speed = 25,
     connection = nil,
-    keys = {},
-    gui = nil
+    gui = nil,
+    CONTROL = {F = 0, B = 0, L = 0, R = 0},
 }
 
 function PetHunterModule.CreateFlyGUI()
@@ -61,70 +61,148 @@ function PetHunterModule.CreateFlyGUI()
     end
 
     local gui = Instance.new("ScreenGui")
-    gui.Parent = player:WaitForChild("PlayerGui")
-    gui.Name = "FlyGui"
+    gui.Name = "FlyTestGUI"
     gui.ResetOnSpawn = false
+    gui.Parent = player:WaitForChild("PlayerGui")
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 180, 0, 90)
-    mainFrame.Position = UDim2.new(0, 10, 0, 10)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    mainFrame.Size = UDim2.new(0, 250, 0, 200)
+    mainFrame.Position = UDim2.new(0.5, -125, 0.5, -100)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 2
-    mainFrame.BorderColor3 = Color3.fromRGB(20, 20, 20)
-    mainFrame.Draggable = true
-    mainFrame.Active = true
+    mainFrame.BorderColor3 = Color3.fromRGB(100, 100, 255)
     mainFrame.Parent = gui
 
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 25)
-    title.Position = UDim2.new(0, 0, 0, 0)
-    title.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     title.BorderSizePixel = 0
-    title.Text = "Fly & Jump"
-    title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.TextSize = 14
+    title.Text = "FLY TEST"
+    title.TextColor3 = Color3.fromRGB(100, 200, 255)
+    title.TextSize = 16
     title.Font = Enum.Font.GothamBold
     title.Parent = mainFrame
 
-    local flyBtn = Instance.new("TextButton")
-    flyBtn.Size = UDim2.new(0.9, 0, 0, 25)
-    flyBtn.Position = UDim2.new(0.05, 0, 0, 30)
-    flyBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-    flyBtn.BorderSizePixel = 1
-    flyBtn.BorderColor3 = Color3.fromRGB(0, 0, 0)
-    flyBtn.Text = "Fly: OFF"
-    flyBtn.TextColor3 = Color3.fromRGB(255, 50, 50)
-    flyBtn.TextSize = 12
-    flyBtn.Font = Enum.Font.Gotham
-    flyBtn.Parent = mainFrame
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Name = "ToggleFly"
+    toggleBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0, 40)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    toggleBtn.BorderSizePixel = 1
+    toggleBtn.BorderColor3 = Color3.fromRGB(100, 100, 255)
+    toggleBtn.Text = "START FLY"
+    toggleBtn.TextColor3 = Color3.fromRGB(100, 200, 255)
+    toggleBtn.TextSize = 14
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.Parent = mainFrame
 
-    local jumpBtn = Instance.new("TextButton")
-    jumpBtn.Size = UDim2.new(0.9, 0, 0, 25)
-    jumpBtn.Position = UDim2.new(0.05, 0, 0, 60)
-    jumpBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-    jumpBtn.BorderSizePixel = 1
-    jumpBtn.BorderColor3 = Color3.fromRGB(0, 0, 0)
-    jumpBtn.Text = "Jump +100"
-    jumpBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-    jumpBtn.TextSize = 12
-    jumpBtn.Font = Enum.Font.Gotham
-    jumpBtn.Parent = mainFrame
-
-    flyBtn.MouseButton1Click:Connect(function()
+    toggleBtn.MouseButton1Click:Connect(function()
         if FlyModule.enabled then
             PetHunterModule.StopFly()
-            flyBtn.Text = "Fly: OFF"
-            flyBtn.TextColor3 = Color3.fromRGB(255, 50, 50)
+            toggleBtn.Text = "START FLY"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
         else
             PetHunterModule.StartFly()
-            flyBtn.Text = "Fly: ON"
-            flyBtn.TextColor3 = Color3.fromRGB(50, 255, 50)
+            toggleBtn.Text = "STOP FLY"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 50)
         end
     end)
 
-    jumpBtn.MouseButton1Click:Connect(function()
-        PetHunterModule.JumpBoost(100)
+    local speedLabel = Instance.new("TextLabel")
+    speedLabel.Size = UDim2.new(0.9, 0, 0, 20)
+    speedLabel.Position = UDim2.new(0.05, 0, 0, 80)
+    speedLabel.BackgroundTransparency = 1
+    speedLabel.Text = "Speed: 25"
+    speedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    speedLabel.TextSize = 12
+    speedLabel.Font = Enum.Font.Gotham
+    speedLabel.Parent = mainFrame
+
+    local speedSlider = Instance.new("TextButton")
+    speedSlider.Name = "SpeedSlider"
+    speedSlider.Size = UDim2.new(0.9, 0, 0, 15)
+    speedSlider.Position = UDim2.new(0.05, 0, 0, 105)
+    speedSlider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    speedSlider.BorderSizePixel = 1
+    speedSlider.BorderColor3 = Color3.fromRGB(100, 100, 255)
+    speedSlider.Text = ""
+    speedSlider.Parent = mainFrame
+
+    local speedFill = Instance.new("Frame")
+    speedFill.Size = UDim2.new(0.4, 0, 1, 0)
+    speedFill.BackgroundColor3 = Color3.fromRGB(100, 200, 255)
+    speedFill.BorderSizePixel = 0
+    speedFill.Parent = speedSlider
+
+    local dragging = false
+    speedSlider.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+        end
+    end)
+
+    speedSlider.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local mouse = player:GetMouse()
+            local sliderPos = speedSlider.AbsolutePosition.X
+            local sliderSize = speedSlider.AbsoluteSize.X
+            local mouseX = mouse.X
+            
+            local percent = math.clamp((mouseX - sliderPos) / sliderSize, 0, 1)
+            speedFill.Size = UDim2.new(percent, 0, 1, 0)
+            
+            local speed = math.floor(percent * 100) + 1
+            PetHunterModule.SetFlySpeed(speed)
+            speedLabel.Text = "Speed: " .. speed
+        end
+    end)
+
+    local instructions = Instance.new("TextLabel")
+    instructions.Size = UDim2.new(0.9, 0, 0, 30)
+    instructions.Position = UDim2.new(0.05, 0, 0, 130)
+    instructions.BackgroundTransparency = 1
+    instructions.Text = "WASD: Move | Space: Up | Ctrl: Down"
+    instructions.TextColor3 = Color3.fromRGB(150, 150, 150)
+    instructions.TextSize = 10
+    instructions.Font = Enum.Font.Gotham
+    instructions.TextWrapped = true
+    instructions.Parent = mainFrame
+
+    local draggingFrame = false
+    local dragStart = nil
+    local startPos = nil
+
+    mainFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingFrame = true
+            dragStart = input.Position
+            startPos = mainFrame.Position
+        end
+    end)
+
+    mainFrame.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingFrame = false
+        end
+    end)
+
+    mainFrame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement and draggingFrame then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
     end)
 
     FlyModule.gui = gui
@@ -612,30 +690,9 @@ function PetHunterModule.ServerHop(config, onNotify)
     return success
 end
 
-local function hookCoilCombo()
-    if FlyModule.coilHooked then return end
-    
-    local backpack = player:WaitForChild("Backpack")
-    local character = player.Character
-    local coil = backpack:FindFirstChild("Coil Combo") or (character and character:FindFirstChild("Coil Combo"))
-    
-    if coil then
-        coil.Equipped:Connect(function()
-            FlyModule.coilEquipped = true
-        end)
-        
-        coil.Unequipped:Connect(function()
-            FlyModule.coilEquipped = false
-        end)
-        
-        FlyModule.coilHooked = true
-    end
-end
-
 function PetHunterModule.StartFly()
     if FlyModule.enabled then return end
     
-    hookCoilCombo()
     FlyModule.enabled = true
     
     local char = player.Character
@@ -648,34 +705,43 @@ function PetHunterModule.StartFly()
     
     FlyModule.connection = RunService.RenderStepped:Connect(function()
         if not FlyModule.enabled then return end
+        
         local char = player.Character
-        if not char then FlyModule.enabled = false return end
+        if not char then 
+            FlyModule.enabled = false 
+            return 
+        end
+        
         local hrp = char:FindFirstChild("HumanoidRootPart")
         local hum = char:FindFirstChild("Humanoid")
-        if not hrp or not hum then FlyModule.enabled = false return end
+        if not hrp or not hum then 
+            FlyModule.enabled = false 
+            return 
+        end
         
         local cam = workspace.CurrentCamera
-        local moveDirection = hum.MoveDirection
         
-        if moveDirection.Magnitude > 0 then
-            local adjustedDir = (cam.CFrame.LookVector * moveDirection.Z + cam.CFrame.RightVector * moveDirection.X).Unit
-            hrp.AssemblyLinearVelocity = adjustedDir * FlyModule.speed
-        else
-            hrp.AssemblyLinearVelocity = Vector3.zero
+        local moveVelocity = Vector3.new(0, 0, 0)
+        
+        if FlyModule.CONTROL.L + FlyModule.CONTROL.R ~= 0 or FlyModule.CONTROL.F + FlyModule.CONTROL.B ~= 0 then
+            moveVelocity = ((cam.CFrame.LookVector * (FlyModule.CONTROL.F + FlyModule.CONTROL.B)) + 
+                           (cam.CFrame.RightVector * (FlyModule.CONTROL.L + FlyModule.CONTROL.R))).Unit * FlyModule.speed
         end
         
-        if FlyModule.keys[Enum.KeyCode.Space] then
-            hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity + Vector3.new(0, FlyModule.speed, 0)
-        elseif FlyModule.keys[Enum.KeyCode.LeftControl] then
-            hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity - Vector3.new(0, FlyModule.speed, 0)
+        if FlyModule.CONTROL.UP == 1 then
+            moveVelocity = moveVelocity + Vector3.new(0, FlyModule.speed, 0)
+        elseif FlyModule.CONTROL.DOWN == 1 then
+            moveVelocity = moveVelocity - Vector3.new(0, FlyModule.speed, 0)
         end
         
+        hrp.AssemblyLinearVelocity = moveVelocity
         hum:ChangeState(Enum.HumanoidStateType.Flying)
     end)
 end
 
 function PetHunterModule.StopFly()
     if not FlyModule.enabled then return end
+    
     FlyModule.enabled = false
     
     if FlyModule.connection then
@@ -717,24 +783,41 @@ function PetHunterModule.InitializeFlyControls()
     UserInputService.InputBegan:Connect(function(input, gpe)
         if gpe then return end
         
-        if input.KeyCode == Enum.KeyCode.F then
-            if FlyModule.enabled then
-                PetHunterModule.StopFly()
-            else
-                PetHunterModule.StartFly()
-            end
+        if input.KeyCode == Enum.KeyCode.W then
+            FlyModule.CONTROL.F = 1
+        elseif input.KeyCode == Enum.KeyCode.S then
+            FlyModule.CONTROL.B = -1
+        elseif input.KeyCode == Enum.KeyCode.A then
+            FlyModule.CONTROL.L = -1
+        elseif input.KeyCode == Enum.KeyCode.D then
+            FlyModule.CONTROL.R = 1
+        elseif input.KeyCode == Enum.KeyCode.Space then
+            FlyModule.CONTROL.UP = 1
+        elseif input.KeyCode == Enum.KeyCode.LeftControl then
+            FlyModule.CONTROL.DOWN = 1
         end
-        
-        FlyModule.keys[input.KeyCode] = true
     end)
 
     UserInputService.InputEnded:Connect(function(input)
-        FlyModule.keys[input.KeyCode] = false
+        if input.KeyCode == Enum.KeyCode.W then
+            FlyModule.CONTROL.F = 0
+        elseif input.KeyCode == Enum.KeyCode.S then
+            FlyModule.CONTROL.B = 0
+        elseif input.KeyCode == Enum.KeyCode.A then
+            FlyModule.CONTROL.L = 0
+        elseif input.KeyCode == Enum.KeyCode.D then
+            FlyModule.CONTROL.R = 0
+        elseif input.KeyCode == Enum.KeyCode.Space then
+            FlyModule.CONTROL.UP = 0
+        elseif input.KeyCode == Enum.KeyCode.LeftControl then
+            FlyModule.CONTROL.DOWN = 0
+        end
     end)
 
     player.CharacterAdded:Connect(function()
-        if FlyModule.enabled then PetHunterModule.StopFly() end
-        FlyModule.coilHooked = false
+        if FlyModule.enabled then 
+            PetHunterModule.StopFly() 
+        end
     end)
 end
 
