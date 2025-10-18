@@ -558,6 +558,10 @@ function PetHunterModule.ServerHop(config, onNotify)
     
     repeat
         attemptCount = attemptCount + 1
+        
+        if onNotify then
+            onNotify("Server Hop", "Searching for server...", 2)
+        end
 
         local servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
 
