@@ -52,9 +52,91 @@ local FlyModule = {
     speed = 25,
     connection = nil,
     keys = {},
-    coilEquipped = false,
-    coilHooked = false
+    gui = nil
 }
+
+function PetHunterModule.CreateFlyGUI()
+    if FlyModule.gui then
+        FlyModule.gui:Destroy()
+    end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Parent = player:WaitForChild("PlayerGui")
+    gui.Name = "FlyGui"
+    gui.ResetOnSpawn = false
+
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 180, 0, 90)
+    mainFrame.Position = UDim2.new(0, 10, 0, 10)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    mainFrame.BorderSizePixel = 2
+    mainFrame.BorderColor3 = Color3.fromRGB(20, 20, 20)
+    mainFrame.Draggable = true
+    mainFrame.Active = true
+    mainFrame.Parent = gui
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 25)
+    title.Position = UDim2.new(0, 0, 0, 0)
+    title.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    title.BorderSizePixel = 0
+    title.Text = "Fly & Jump"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 14
+    title.Font = Enum.Font.GothamBold
+    title.Parent = mainFrame
+
+    local flyBtn = Instance.new("TextButton")
+    flyBtn.Size = UDim2.new(0.9, 0, 0, 25)
+    flyBtn.Position = UDim2.new(0.05, 0, 0, 30)
+    flyBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    flyBtn.BorderSizePixel = 1
+    flyBtn.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    flyBtn.Text = "Fly: OFF"
+    flyBtn.TextColor3 = Color3.fromRGB(255, 50, 50)
+    flyBtn.TextSize = 12
+    flyBtn.Font = Enum.Font.Gotham
+    flyBtn.Parent = mainFrame
+
+    local jumpBtn = Instance.new("TextButton")
+    jumpBtn.Size = UDim2.new(0.9, 0, 0, 25)
+    jumpBtn.Position = UDim2.new(0.05, 0, 0, 60)
+    jumpBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    jumpBtn.BorderSizePixel = 1
+    jumpBtn.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    jumpBtn.Text = "Jump +100"
+    jumpBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    jumpBtn.TextSize = 12
+    jumpBtn.Font = Enum.Font.Gotham
+    jumpBtn.Parent = mainFrame
+
+    flyBtn.MouseButton1Click:Connect(function()
+        if FlyModule.enabled then
+            PetHunterModule.StopFly()
+            flyBtn.Text = "Fly: OFF"
+            flyBtn.TextColor3 = Color3.fromRGB(255, 50, 50)
+        else
+            PetHunterModule.StartFly()
+            flyBtn.Text = "Fly: ON"
+            flyBtn.TextColor3 = Color3.fromRGB(50, 255, 50)
+        end
+    end)
+
+    jumpBtn.MouseButton1Click:Connect(function()
+        PetHunterModule.JumpBoost(100)
+    end)
+
+    FlyModule.gui = gui
+    return gui
+end
+
+function PetHunterModule.DestroyFlyGUI()
+    if FlyModule.gui then
+        FlyModule.gui:Destroy()
+        FlyModule.gui = nil
+    end
+end
 
 function PetHunterModule.GetMyPlotId()
     if myPlotId then return myPlotId end
