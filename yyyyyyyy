@@ -42,12 +42,12 @@ local JOB_ID = game.JobId
 local MAX_RETRIES = 3
 local RETRY_DELAY = 2
 local SERVER_CACHE_DURATION = 60
+local MAX_SERVER_HOP_FAILS = 6
 
 local cachedServers = {}
 local lastServerFetch = 0
 local myPlotId = nil
 local serverHopFailCount = 0
-local MAX_SERVERHOP_FAILS = 6
 
 local FlyModule = {
     enabled = false,
@@ -56,6 +56,57 @@ local FlyModule = {
     gui = nil,
     CONTROL = {F = 0, B = 0, L = 0, R = 0},
 }
+
+local function showKickMessage()
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "KickMessageGUI"
+    gui.ResetOnSpawn = false
+    gui.Parent = game.CoreGui
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 400, 0, 150)
+    frame.Position = UDim2.new(0.5, -200, 0.5, -75)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    frame.BorderSizePixel = 3
+    frame.BorderColor3 = Color3.fromRGB(255, 50, 50)
+    frame.Parent = gui
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 50)
+    title.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    title.BorderSizePixel = 0
+    title.Text = "⚠️ SERVER HOP FAILED ⚠️"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 18
+    title.Font = Enum.Font.GothamBold
+    title.Parent = frame
+
+    local message = Instance.new("TextLabel")
+    message.Size = UDim2.new(1, -20, 0, 60)
+    message.Position = UDim2.new(0, 10, 0, 60)
+    message.BackgroundTransparency = 1
+    message.Text = "Server hop failed " .. serverHopFailCount .. " times.\nRejoining game to fix..."
+    message.TextColor3 = Color3.fromRGB(255, 255, 255)
+    message.TextSize = 14
+    message.Font = Enum.Font.Gotham
+    message.TextWrapped = true
+    message.Parent = frame
+
+    local countdown = Instance.new("TextLabel")
+    countdown.Size = UDim2.new(1, 0, 0, 30)
+    countdown.Position = UDim2.new(0, 0, 1, -30)
+    countdown.BackgroundTransparency = 1
+    countdown.Text = "Rejoining in 3..."
+    countdown.TextColor3 = Color3.fromRGB(255, 200, 0)
+    countdown.TextSize = 16
+    countdown.Font = Enum.Font.GothamBold
+    countdown.Parent = frame
+
+    for i = 3, 1, -1 do
+        countdown.Text = "Rejoining in " .. i .. "..."
+        wait(1)
+    end
+end
 
 function PetHunterModule.CreateFlyGUI()
     if FlyModule.gui then
@@ -566,23 +617,31 @@ function PetHunterModule.ServerHop(config, onNotify)
         servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
         
         if #servers == 0 then
+            serverHopFailCount = serverHopFailCount + 1
+            
+            if serverHopFailCount >= MAX_SERVER_HOP_FAILS then
+                if onNotify then
+                    onNotify("Too Many Fails", "Rejoining game...", 3)
+                end
+                
+                showKickMessage()
+                
+                wait(3)
+                
+                local success = pcall(function()
+                    TeleportService:Teleport(PLACE_ID, player)
+                end)
+                
+                if not success then
+                    player:Kick("\n⚠️ SERVER HOP FAILED " .. serverHopFailCount .. " TIMES ⚠️\n\nRejoin the game for server hop to work properly.")
+                end
+                
+                return false
+            end
+            
             local success = pcall(function()
                 TeleportService:Teleport(PLACE_ID, player)
             end)
-            
-            if not success then
-                serverHopFailCount = serverHopFailCount + 1
-                if serverHopFailCount >= MAX_SERVERHOP_FAILS then
-                    if onNotify then
-                        onNotify("Max Fails Reached", "Kicking player after " .. MAX_SERVERHOP_FAILS .. " failed hops", 5)
-                    end
-                    wait(2)
-                    player:Kick("Server hop failed " .. MAX_SERVERHOP_FAILS .. " times. Please rejoin manually.")
-                end
-            else
-                serverHopFailCount = 0
-            end
-            
             return success
         end
     end
@@ -599,6 +658,28 @@ function PetHunterModule.ServerHop(config, onNotify)
         end
     end
 
+    serverHopFailCount = serverHopFailCount + 1
+    
+    if serverHopFailCount >= MAX_SERVER_HOP_FAILS then
+        if onNotify then
+            onNotify("Too Many Fails", "Rejoining game...", 3)
+        end
+        
+        showKickMessage()
+        
+        wait(3)
+        
+        local success = pcall(function()
+            TeleportService:Teleport(PLACE_ID, player)
+        end)
+        
+        if not success then
+            player:Kick("\n⚠️ SERVER HOP FAILED " .. serverHopFailCount .. " TIMES ⚠️\n\nRejoin the game for server hop to work properly.")
+        end
+        
+        return false
+    end
+
     cachedServers = {}
     lastServerFetch = 0
     
@@ -606,21 +687,8 @@ function PetHunterModule.ServerHop(config, onNotify)
         TeleportService:Teleport(PLACE_ID, player)
     end)
 
-    if not success then
-        serverHopFailCount = serverHopFailCount + 1
-        if onNotify then
-            onNotify("Server Hop Failed", "Attempt " .. serverHopFailCount .. "/" .. MAX_SERVERHOP_FAILS, 3)
-        end
-        
-        if serverHopFailCount >= MAX_SERVERHOP_FAILS then
-            if onNotify then
-                onNotify("Max Fails Reached", "Kicking player after " .. MAX_SERVERHOP_FAILS .. " failed hops", 5)
-            end
-            wait(2)
-            player:Kick("Server hop failed " .. MAX_SERVERHOP_FAILS .. " times. Please rejoin manually.")
-        end
-    else
-        serverHopFailCount = 0
+    if not success and onNotify then
+        onNotify("Server Hop Failed", "Attempt " .. serverHopFailCount .. "/" .. MAX_SERVER_HOP_FAILS, 3)
     end
 
     return success
@@ -755,6 +823,14 @@ function PetHunterModule.InitializeFlyControls()
             PetHunterModule.StopFly() 
         end
     end)
+end
+
+function PetHunterModule.GetServerHopFailCount()
+    return serverHopFailCount
+end
+
+function PetHunterModule.ResetServerHopFailCount()
+    serverHopFailCount = 0
 end
 
 return PetHunterModule
