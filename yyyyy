@@ -1,0 +1,659 @@
+local PetHunterModule = {}
+
+local Players = game:GetService('Players')
+local RunService = game:GetService('RunService')
+local HttpService = game:GetService('HttpService')
+local TeleportService = game:GetService('TeleportService')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+PetHunterModule.SecretPets = {
+    'La Vacca Saturno Saturnita', 'Los Tralaleritos', 'Graipuss Medussi',
+    'La Grande Combinasion', 'Sammyni Spyderini', 'Garama and Madundung',
+    'Torrtuginni Dragonfrutini', 'Las Tralaleritas', 'Pot Hotspot',
+    'Nuclearo Dinossauro', 'Las Vaquitas Saturnitas', 'Chicleteira Bicicleteira',
+    'Los Combinasionas', 'Karkerkar Kurkur', 'Dragon Cannelloni',
+    'Los Hotspotsitos', 'Esok Sekolah', 'Nooo My Hotspot',
+    'Los Matteos', 'Job Job Job Sahur', 'Dul Dul Dul',
+    'Blackhole Goat', 'Los Spyderinis', 'Ketupat Kepat',
+    'La Supreme Combinasion', 'Bisonte Giuppitere', 'Guerriro Digitale',
+    'Ketchuru and Musturu', 'Spaghetti Tualetti', 'Los Nooo My Hotspotsitos',
+    'Trenostruzzo Turbo 4000', 'Fragola La La La', 'La Sahur Combinasion',
+    'La Karkerkar Combinasion', 'Tralaledon', 'Los Bros',
+    'Los Chicleteiras', 'Chachechi', 'Extinct Tralalero',
+    'Extinct Matteo', 'Las Sis', 'Celularcini Viciosini',
+    'La Extinct Grande', 'Quesadilla Crocodila', 'Tacorita Bicicleta',
+    'La Cucaracha', 'To to to Sahur', 'Mariachi Corazoni',
+    'Los Tacoritas', 'Tictac Sahur', 'Yess my examine',
+    'Karker Sahur', 'Noo my examine', 'Money Money Puggy',
+    'Los Primos', 'Tang Tang Keletang', 'Perrito Burrito',
+    'Chillin Chili', 'Los Tortus', 'Los Karkeritos',
+    'Los Jobcitos', 'La Secret Combinasion', 'Burguro And Fryuro',
+    'Zombie Tralala', 'Vulturino Skeletono', 'Frankentteo',
+    'La Vacca Jacko Linterino', 'Chicleteirina Bicicleteirina', 'Eviledon',
+    'La Spooky Grande', 'Los Mobilis', 'Spooky and Pumpky'
+}
+
+local PLACE_ID = game.PlaceId
+local JOB_ID = game.JobId
+local MAX_RETRIES = 3
+local RETRY_DELAY = 2
+local SERVER_CACHE_DURATION = 60
+
+local cachedServers = {}
+local lastServerFetch = 0
+local myPlotId = nil
+
+local FlyModule = {
+    enabled = false,
+    speed = 25,
+    connection = nil,
+    keys = {},
+    coilEquipped = false,
+    coilHooked = false
+}
+
+function PetHunterModule.GetMyPlotId()
+    if myPlotId then return myPlotId end
+    
+    local success, result = pcall(function()
+        local PlotController = require(ReplicatedStorage.Controllers.PlotController)
+        local myPlot = PlotController:GetMyPlot()
+        if myPlot and myPlot.PlotModel then
+            myPlotId = myPlot.PlotModel.Name
+            return myPlotId
+        end
+    end)
+    
+    if success and result then
+        return result
+    end
+    
+    pcall(function()
+        local plotModel = player:FindFirstChild("PlotModel")
+        if plotModel and plotModel.Value then
+            myPlotId = plotModel.Value.Name
+        end
+    end)
+    
+    return myPlotId
+end
+
+local function getTextLabelText(overhead, name)
+    local label = overhead:FindFirstChild(name)
+    return label and label:IsA('TextLabel') and label.Text or 'N/A'
+end
+
+function PetHunterModule.CheckIfStolen()
+    local stolenFrame = player.PlayerGui:FindFirstChild("Stolen")
+    if not stolenFrame then return false end
+    
+    local statusLabel = stolenFrame:FindFirstChildOfClass("TextLabel", true)
+    if statusLabel and statusLabel.Text and statusLabel.Text:lower():find("fusing") then
+        return true
+    end
+    
+    return false
+end
+
+function PetHunterModule.GetPetDetails()
+    local animals = {}
+    local playerPlotId = PetHunterModule.GetMyPlotId()
+    
+    local success, err = pcall(function()
+        local Plots = workspace:WaitForChild('Plots', 5)
+        if not Plots then return end
+
+        for _, plot in ipairs(Plots:GetChildren()) do
+            local plotID = plot.Name
+            
+            if plotID ~= playerPlotId then
+                local podiums = plot:FindFirstChild('AnimalPodiums')
+
+                if podiums then
+                    for _, podium in ipairs(podiums:GetChildren()) do
+                        local base = podium:FindFirstChild('Base')
+                        local spawn = base and base:FindFirstChild('Spawn')
+                        local attachment = spawn and spawn:FindFirstChild('Attachment')
+                        local overhead = attachment and attachment:FindFirstChild('AnimalOverhead')
+
+                        if overhead then
+                            local data = {
+                                DisplayName = getTextLabelText(overhead, 'DisplayName'),
+                                Generation = getTextLabelText(overhead, 'Generation'),
+                                Mutation = getTextLabelText(overhead, 'Mutation'),
+                                Price = getTextLabelText(overhead, 'Price'),
+                                Rarity = getTextLabelText(overhead, 'Rarity'),
+                                PlotID = plotID,
+                                Position = spawn.Position,
+                            }
+
+                            local key = data.DisplayName .. '|' .. data.Generation .. '|' .. data.Mutation .. '|' .. data.Price .. '|' .. data.Rarity
+
+                            if animals[key] then
+                                animals[key].count = animals[key].count + 1
+                                table.insert(animals[key].positions, data.Position)
+                                table.insert(animals[key].plotIDs, plotID)
+                            else
+                                animals[key] = {
+                                    count = 1,
+                                    info = data,
+                                    positions = { data.Position },
+                                    plotIDs = { plotID },
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    return animals
+end
+
+function PetHunterModule.FindAllInstances(petName, petDetails)
+    local instances = {}
+    local playerPlotId = PetHunterModule.GetMyPlotId()
+    
+    if petDetails then
+        for key, petData in pairs(petDetails) do
+            if petData.info.DisplayName == petName and petData.info.PlotID ~= playerPlotId then
+                for i, position in ipairs(petData.positions) do
+                    table.insert(instances, {
+                        Position = position,
+                        Name = petName,
+                        PlotID = petData.plotIDs[i],
+                        IsPodiumPet = true,
+                        PetInfo = petData.info
+                    })
+                end
+            end
+        end
+    end
+    
+    pcall(function()
+        for _, child in pairs(workspace:GetChildren()) do
+            if child.Name == petName and not child:FindFirstChild("IsPodiumMarker") then
+                table.insert(instances, child)
+            end
+        end
+    end)
+    
+    return instances
+end
+
+function PetHunterModule.GetPosition(instance)
+    if type(instance) == "table" and instance.IsPodiumPet then
+        return instance.Position
+    end
+    
+    if instance:FindFirstChild('HumanoidRootPart') then
+        return instance.HumanoidRootPart.Position
+    elseif instance:FindFirstChild('RootPart') then
+        return instance.RootPart.Position
+    elseif instance:FindFirstChild('FakeRootPart') then
+        return instance.FakeRootPart.Position
+    elseif instance:FindFirstChild('Torso') then
+        return instance.Torso.Position
+    elseif instance:FindFirstChild('Head') then
+        return instance.Head.Position
+    elseif instance.PrimaryPart then
+        return instance.PrimaryPart.Position
+    else
+        local cf, size = instance:GetBoundingBox()
+        return cf.Position
+    end
+end
+
+function PetHunterModule.CreateESP(instance, petName, index, config)
+    local line = Drawing.new('Line')
+    line.Thickness = 2
+    line.Color = Color3.fromRGB(255, 0, 255)
+    line.Transparency = 1
+    line.Visible = false
+
+    local text = Drawing.new('Text')
+    text.Size = 18
+    text.Center = true
+    text.Outline = true
+    text.OutlineColor = Color3.new(0, 0, 0)
+    text.Font = 2
+    text.Color = Color3.fromRGB(255, 255, 255)
+    text.Visible = false
+
+    local distanceText = Drawing.new('Text')
+    distanceText.Size = 14
+    distanceText.Center = true
+    distanceText.Outline = true
+    distanceText.OutlineColor = Color3.new(0, 0, 0)
+    distanceText.Font = 2
+    distanceText.Color = Color3.fromRGB(255, 255, 0)
+    distanceText.Visible = false
+
+    local connection = RunService.RenderStepped:Connect(function()
+        if not config.espEnabled or not config.selectedPets[petName] then
+            line.Visible = false
+            text.Visible = false
+            distanceText.Visible = false
+            return
+        end
+
+        local isValid = false
+        if type(instance) == "table" and instance.IsPodiumPet then
+            isValid = true
+        elseif instance and instance:IsDescendantOf(workspace) then
+            isValid = true
+        end
+
+        if not isValid then
+            line.Visible = false
+            text.Visible = false
+            distanceText.Visible = false
+            return
+        end
+
+        local success, petPos = pcall(PetHunterModule.GetPosition, instance)
+        if not success then
+            line.Visible = false
+            text.Visible = false
+            distanceText.Visible = false
+            return
+        end
+
+        local screenPos, onScreen = Camera:WorldToViewportPoint(petPos)
+        if onScreen and screenPos.Z > 0 then
+            local playerPos = player.Character and player.Character:FindFirstChild('HumanoidRootPart')
+            local distance = playerPos and math.floor((playerPos.Position - petPos).Magnitude) or 0
+
+            local from = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+            local to = Vector2.new(screenPos.X, screenPos.Y)
+
+            line.From = from
+            line.To = to
+            line.Visible = true
+
+            local displayName = petName
+            if index then
+                displayName = petName .. ' [' .. index .. ']'
+            end
+
+            text.Position = Vector2.new(screenPos.X, screenPos.Y - 30)
+            text.Text = displayName
+            text.Visible = true
+
+            distanceText.Position = Vector2.new(screenPos.X, screenPos.Y + 20)
+            distanceText.Text = distance .. 'm'
+            distanceText.Visible = true
+        else
+            line.Visible = false
+            text.Visible = false
+            distanceText.Visible = false
+        end
+    end)
+
+    return {
+        line = line,
+        text = text,
+        distanceText = distanceText,
+        connection = connection,
+        cleanup = function()
+            connection:Disconnect()
+            line:Remove()
+            text:Remove()
+            distanceText:Remove()
+        end,
+    }
+end
+
+function PetHunterModule.SendWebhook(url, data, retries)
+    retries = retries or 0
+    local success, response = pcall(function()
+        return http_request({
+            Url = url,
+            Method = 'POST',
+            Headers = {
+                ['Content-Type'] = 'application/json',
+            },
+            Body = HttpService:JSONEncode(data),
+        })
+    end)
+    if success and response and (response.StatusCode == 200 or response.StatusCode == 204) then
+        return true
+    elseif retries < MAX_RETRIES then
+        wait(RETRY_DELAY)
+        return PetHunterModule.SendWebhook(url, data, retries + 1)
+    else
+        return false
+    end
+end
+
+function PetHunterModule.CreateEmbed(foundPets, totalFinds, petDetails, ignorePetSelection, config)
+    local petsFoundList = {}
+    for petName, instances in pairs(foundPets) do
+        if #instances > 0 and (ignorePetSelection or config.selectedPets[petName]) then
+            table.insert(petsFoundList, {
+                name = petName,
+                value = string.format('**%d found**', #instances),
+                inline = true,
+            })
+        end
+    end
+
+    local petDetailsText = ''
+    local petDetailsAdded = {}
+    
+    if petDetails and next(petDetails) then
+        for _, entry in pairs(petDetails) do
+            local petName = entry.info.DisplayName
+            if (ignorePetSelection or config.selectedPets[petName]) and not petDetailsAdded[petName] then
+                local info = entry.info
+                petDetailsText = petDetailsText .. string.format(
+                    '**%s** (x%d)\n📊 Gen: %s | 🧬 Mut: %s | 💰 %s | 🎖️ %s\n\n',
+                    info.DisplayName,
+                    entry.count,
+                    info.Generation,
+                    info.Mutation,
+                    info.Price,
+                    info.Rarity
+                )
+                petDetailsAdded[petName] = true
+            end
+        end
+    end
+
+    local embed = {
+        title = '🎯 **TARGET ACQUIRED!**',
+        description = string.format('**%d Secret Pets Found!**', totalFinds),
+        color = 16711935,
+        fields = {
+            {
+                name = '📍 **Location Info**',
+                value = string.format(
+                    '```lua\ngame:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s")\n```\n👤 Players: %d',
+                    PLACE_ID,
+                    JOB_ID,
+                    #Players:GetPlayers()
+                ),
+                inline = false,
+            },
+        },
+        footer = {
+            text = string.format(
+                '🔍 Session: %d scans | 📊 Total finds: %d | 🎯 Place ID: %s',
+                config.sessionStats.scans,
+                config.sessionStats.totalFinds,
+                PLACE_ID
+            ),
+        },
+        timestamp = os.date('!%Y-%m-%dT%H:%M:%SZ'),
+    }
+
+    if #petsFoundList > 0 then
+        table.insert(embed.fields, {
+            name = '🎨 **Pets Found**',
+            value = table.concat((function()
+                local list = {}
+                for _, pet in ipairs(petsFoundList) do
+                    table.insert(list, string.format('• %s: %s', pet.name, pet.value))
+                end
+                return list
+            end)(), '\n'),
+            inline = false,
+        })
+    end
+
+    if petDetailsText ~= '' then
+        if #petDetailsText > 1000 then
+            petDetailsText = petDetailsText:sub(1, 1000) .. '...\n*More pets available!*'
+        end
+        
+        table.insert(embed.fields, {
+            name = '📋 **Pet Details**',
+            value = petDetailsText,
+            inline = false,
+        })
+    end
+
+    return embed
+end
+
+local function getServersFromAPI(minPlayers, maxPlayers, preferredPlayerCount)
+    if tick() - lastServerFetch < SERVER_CACHE_DURATION and #cachedServers > 0 then
+        return cachedServers
+    end
+
+    local servers = {}
+    local cursor = ''
+    local attempts = 0
+    local maxAttempts = 10
+    local maxServersToFetch = 200
+
+    repeat
+        attempts = attempts + 1
+        local url = string.format(
+            'https://games.roblox.com/v1/games/%d/servers/Public?limit=100&sortOrder=Asc&cursor=%s',
+            PLACE_ID,
+            cursor
+        )
+
+        local success, result = pcall(function()
+            local response = game:HttpGet(url)
+            return HttpService:JSONDecode(response)
+        end)
+
+        if success and result and result.data then
+            for _, server in pairs(result.data) do
+                local isValidServer = server.id ~= JOB_ID
+                    and server.playing >= minPlayers
+                    and server.playing <= maxPlayers
+                    and server.maxPlayers > server.playing
+
+                if isValidServer then
+                    server.priority = math.abs(server.playing - preferredPlayerCount)
+                    table.insert(servers, server)
+                end
+            end
+            cursor = result.nextPageCursor or ''
+        else
+            if attempts >= maxAttempts then
+                break
+            end
+            wait(1)
+        end
+    until cursor == '' or #servers >= maxServersToFetch or attempts >= maxAttempts
+
+    if #servers > 0 then
+        table.sort(servers, function(a, b)
+            return a.priority < b.priority
+        end)
+    end
+
+    cachedServers = servers
+    lastServerFetch = tick()
+
+    return servers
+end
+
+local function teleportToServer(serverId)
+    local success, errorMessage = pcall(function()
+        TeleportService:TeleportToPlaceInstance(PLACE_ID, serverId, player)
+    end)
+    return success, errorMessage
+end
+
+function PetHunterModule.ServerHop(config, onNotify)
+    if onNotify then
+        onNotify("Server Hop", "Searching for server...", 2)
+    end
+
+    local servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
+
+    if #servers == 0 then
+        cachedServers = {}
+        lastServerFetch = 0
+        servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
+        
+        if #servers == 0 then
+            local success = pcall(function()
+                TeleportService:Teleport(PLACE_ID, player)
+            end)
+            return success
+        end
+    end
+
+    for i, selectedServer in ipairs(servers) do
+        local success, error = teleportToServer(selectedServer.id)
+        if success then
+            return true
+        else
+            if i < #servers then
+                wait(0.3)
+            end
+        end
+    end
+
+    cachedServers = {}
+    lastServerFetch = 0
+    
+    local success = pcall(function()
+        TeleportService:Teleport(PLACE_ID, player)
+    end)
+
+    if not success and onNotify then
+        onNotify("Server Hop Failed", "Unable to find server", 3)
+    end
+
+    return success
+end
+
+local function hookCoilCombo()
+    if FlyModule.coilHooked then return end
+    
+    local backpack = player:WaitForChild("Backpack")
+    local character = player.Character
+    local coil = backpack:FindFirstChild("Coil Combo") or (character and character:FindFirstChild("Coil Combo"))
+    
+    if coil then
+        coil.Equipped:Connect(function()
+            FlyModule.coilEquipped = true
+        end)
+        
+        coil.Unequipped:Connect(function()
+            FlyModule.coilEquipped = false
+        end)
+        
+        FlyModule.coilHooked = true
+    end
+end
+
+function PetHunterModule.StartFly()
+    if FlyModule.enabled then return end
+    
+    hookCoilCombo()
+    FlyModule.enabled = true
+    
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not hrp or not hum then return end
+    
+    if FlyModule.connection then FlyModule.connection:Disconnect() end
+    
+    FlyModule.connection = RunService.RenderStepped:Connect(function()
+        if not FlyModule.enabled then return end
+        local char = player.Character
+        if not char then FlyModule.enabled = false return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChild("Humanoid")
+        if not hrp or not hum then FlyModule.enabled = false return end
+        
+        local cam = workspace.CurrentCamera
+        local moveDirection = hum.MoveDirection
+        
+        if moveDirection.Magnitude > 0 then
+            local adjustedDir = (cam.CFrame.LookVector * moveDirection.Z + cam.CFrame.RightVector * moveDirection.X).Unit
+            hrp.AssemblyLinearVelocity = adjustedDir * FlyModule.speed
+        else
+            hrp.AssemblyLinearVelocity = Vector3.zero
+        end
+        
+        if FlyModule.keys[Enum.KeyCode.Space] then
+            hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity + Vector3.new(0, FlyModule.speed, 0)
+        elseif FlyModule.keys[Enum.KeyCode.LeftControl] then
+            hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity - Vector3.new(0, FlyModule.speed, 0)
+        end
+        
+        hum:ChangeState(Enum.HumanoidStateType.Flying)
+    end)
+end
+
+function PetHunterModule.StopFly()
+    if not FlyModule.enabled then return end
+    FlyModule.enabled = false
+    
+    if FlyModule.connection then
+        FlyModule.connection:Disconnect()
+        FlyModule.connection = nil
+    end
+    
+    local char = player.Character
+    if char then
+        local hum = char:FindFirstChild("Humanoid")
+        if hum then
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end
+end
+
+function PetHunterModule.SetFlySpeed(speed)
+    FlyModule.speed = speed
+end
+
+function PetHunterModule.GetFlySpeed()
+    return FlyModule.speed
+end
+
+function PetHunterModule.IsFlyEnabled()
+    return FlyModule.enabled
+end
+
+function PetHunterModule.JumpBoost(amount)
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity + Vector3.new(0, amount, 0)
+    end
+end
+
+function PetHunterModule.InitializeFlyControls()
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        
+        if input.KeyCode == Enum.KeyCode.F then
+            if FlyModule.enabled then
+                PetHunterModule.StopFly()
+            else
+                PetHunterModule.StartFly()
+            end
+        end
+        
+        FlyModule.keys[input.KeyCode] = true
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        FlyModule.keys[input.KeyCode] = false
+    end)
+
+    player.CharacterAdded:Connect(function()
+        if FlyModule.enabled then PetHunterModule.StopFly() end
+        FlyModule.coilHooked = false
+    end)
+end
+
+return PetHunterModule
