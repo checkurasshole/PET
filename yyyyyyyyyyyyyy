@@ -44,11 +44,13 @@ local MAX_RETRIES = 3
 local RETRY_DELAY = 2
 local SERVER_CACHE_DURATION = 60
 local MAX_SERVERHOP_FAILS = 6
+local SERVERHOP_RETRY_DELAY = 1.5
 
 local cachedServers = {}
 local lastServerFetch = 0
 local myPlotId = nil
 local serverHopFailCount = 0
+local isServerHopping = false
 
 local FlyModule = {
     enabled = false,
@@ -555,99 +557,65 @@ local function teleportToServer(serverId)
 end
 
 function PetHunterModule.ServerHop(config, onNotify)
-    if onNotify then
-        onNotify("Server Hop", "Searching for server... (Attempt " .. (serverHopFailCount + 1) .. "/" .. MAX_SERVERHOP_FAILS .. ")", 2)
-    end
-
-    local servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
-
-    if #servers == 0 then
-        cachedServers = {}
-        lastServerFetch = 0
-        servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
-        
-        if #servers == 0 then
-            serverHopFailCount = serverHopFailCount + 1
-            
-            if serverHopFailCount >= MAX_SERVERHOP_FAILS then
-                if onNotify then
-                    onNotify("Server Hop Failed", "Failed " .. MAX_SERVERHOP_FAILS .. " times. Kicking...", 5)
-                end
-                
-                pcall(function()
-                    StarterGui:SetCore("SendNotification", {
-                        Title = "⚠️ SERVER HOP FAILED",
-                        Text = "Kicked after " .. MAX_SERVERHOP_FAILS .. " failed attempts.\nPlease rejoin the game to continue.",
-                        Duration = 10,
-                    })
-                end)
-                
-                wait(2)
-                player:Kick("❌ Server hop failed " .. MAX_SERVERHOP_FAILS .. " times.\n\n✅ Please rejoin the game for server hopping to work properly again.\n\n🔄 This is normal and helps reset the connection.")
-                return false
-            end
-            
-            if onNotify then
-                onNotify("Server Hop Failed", "No servers found (Attempt " .. serverHopFailCount .. "/" .. MAX_SERVERHOP_FAILS .. ")", 3)
-            end
-            
-            local success = pcall(function()
-                TeleportService:Teleport(PLACE_ID, player)
-            end)
-            
-            return success
-        end
-    end
-
-    local teleportSuccess = false
-    for i, selectedServer in ipairs(servers) do
-        local success, error = teleportToServer(selectedServer.id)
-        if success then
-            serverHopFailCount = 0
-            teleportSuccess = true
-            return true
-        else
-            if i < #servers then
-                wait(0.3)
-            end
-        end
-    end
-
-    if not teleportSuccess then
-        serverHopFailCount = serverHopFailCount + 1
-        
-        if serverHopFailCount >= MAX_SERVERHOP_FAILS then
-            if onNotify then
-                onNotify("Server Hop Failed", "Failed " .. MAX_SERVERHOP_FAILS .. " times. Kicking...", 5)
-            end
-            
-            pcall(function()
-                StarterGui:SetCore("SendNotification", {
-                    Title = "⚠️ SERVER HOP FAILED",
-                    Text = "Kicked after " .. MAX_SERVERHOP_FAILS .. " failed attempts.\nPlease rejoin the game to continue.",
-                    Duration = 10,
-                })
-            end)
-            
-            wait(2)
-            player:Kick("❌ Server hop failed " .. MAX_SERVERHOP_FAILS .. " times.\n\n✅ Please rejoin the game for server hopping to work properly again.\n\n🔄 This is normal and helps reset the connection.")
-            return false
-        end
-        
-        if onNotify then
-            onNotify("Server Hop Failed", "Teleport failed (Attempt " .. serverHopFailCount .. "/" .. MAX_SERVERHOP_FAILS .. ")", 3)
-        end
-        
-        cachedServers = {}
-        lastServerFetch = 0
-        
-        local success = pcall(function()
-            TeleportService:Teleport(PLACE_ID, player)
-        end)
-
-        return success
+    if isServerHopping then
+        return false
     end
     
+    isServerHopping = true
+    
+    for attempt = 1, MAX_SERVERHOP_FAILS do
+        if onNotify then
+            onNotify("Server Hop", "Searching for server... (Attempt " .. attempt .. "/" .. MAX_SERVERHOP_FAILS .. ")", 2)
+        end
+
+        local servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
+
+        if #servers == 0 then
+            cachedServers = {}
+            lastServerFetch = 0
+            wait(0.5)
+            servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
+        end
+
+        if #servers > 0 then
+            for i, selectedServer in ipairs(servers) do
+                local success, error = teleportToServer(selectedServer.id)
+                if success then
+                    serverHopFailCount = 0
+                    isServerHopping = false
+                    return true
+                else
+                    if i < #servers then
+                        wait(0.3)
+                    end
+                end
+            end
+        end
+
+        if attempt < MAX_SERVERHOP_FAILS then
+            if onNotify then
+                onNotify("Server Hop", "Retrying... (Attempt " .. attempt .. "/" .. MAX_SERVERHOP_FAILS .. ")", 1.5)
+            end
+            wait(SERVERHOP_RETRY_DELAY)
+        end
+    end
+
+    if onNotify then
+        onNotify("Server Hop Failed", "Failed " .. MAX_SERVERHOP_FAILS .. " times. Kicking...", 5)
+    end
+    
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "⚠️ SERVER HOP FAILED",
+            Text = "Kicked after " .. MAX_SERVERHOP_FAILS .. " failed attempts.\nPlease rejoin the game to continue.",
+            Duration = 10,
+        })
+    end)
+    
+    wait(2)
+    player:Kick("❌ Server hop failed " .. MAX_SERVERHOP_FAILS .. " times.\n\n✅ Please rejoin the game for server hopping to work properly again.\n\n🔄 This is normal and helps reset the connection.")
+    
+    isServerHopping = false
     return false
 end
 
