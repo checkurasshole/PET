@@ -560,8 +560,8 @@ function PetHunterModule.ServerHop(config, onNotify)
         attemptCount = attemptCount + 1
         
         if onNotify then
-            onNotify("Server Hop", "Searching for server... (Attempt " .. attemptCount .. "/" .. MAX_SERVERHOP_FAILS .. ")", 2)
-        end
+        onNotify("Server Hop", "Searching for server...", 2)
+    end
 
         local servers = getServersFromAPI(config.minPlayers, config.maxPlayers, config.preferredPlayerCount)
 
@@ -591,7 +591,7 @@ function PetHunterModule.ServerHop(config, onNotify)
             end
             
             if onNotify then
-                onNotify("Server Hop", "No servers found (Attempt " .. attemptCount .. "/" .. MAX_SERVERHOP_FAILS .. ")", 2)
+                onNotify("Server Hop", "No servers found", 2)
             end
             
             wait(1)
@@ -628,7 +628,7 @@ function PetHunterModule.ServerHop(config, onNotify)
                 end
                 
                 if onNotify then
-                    onNotify("Server Hop", "Teleport failed (Attempt " .. attemptCount .. "/" .. MAX_SERVERHOP_FAILS .. ")", 2)
+                    onNotify("Server Hop", "Teleport failed", 2)
                 end
                 
                 wait(1)
