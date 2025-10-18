@@ -1,0 +1,284 @@
+local Players = game:GetService('Players')
+local RunService = game:GetService('RunService')
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local FlyModule = {
+    enabled = false,
+    speed = 50,
+    connection = nil,
+    tilt = 0,
+    moveForward = 0,
+    moveSide = 0,
+    moveUp = 0,
+}
+
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+-- Create Mobile Controls GUI
+local function createMobileControlsGUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "MobileControlsGUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    -- Main Fly Button (Top Center)
+    local flyButton = Instance.new("TextButton")
+    flyButton.Name = "FlyButton"
+    flyButton.Size = UDim2.new(0, 80, 0, 80)
+    flyButton.Position = UDim2.new(0.5, -40, 0, 20)
+    flyButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    flyButton.BorderSizePixel = 2
+    flyButton.BorderColor3 = Color3.fromRGB(100, 150, 255)
+    flyButton.Text = "FLY"
+    flyButton.TextColor3 = Color3.fromRGB(100, 200, 255)
+    flyButton.TextSize = 20
+    flyButton.Font = Enum.Font.GothamBold
+    flyButton.Parent = screenGui
+
+    -- Rise Button (Right side)
+    local riseBtn = Instance.new("TextButton")
+    riseBtn.Name = "Rise"
+    riseBtn.Size = UDim2.new(0, 60, 0, 60)
+    riseBtn.Position = UDim2.new(1, -70, 1, -140)
+    riseBtn.BackgroundColor3 = Color3.fromRGB(50, 70, 50)
+    riseBtn.BorderSizePixel = 1
+    riseBtn.BorderColor3 = Color3.fromRGB(100, 200, 100)
+    riseBtn.Text = "UP"
+    riseBtn.TextColor3 = Color3.fromRGB(100, 255, 100)
+    riseBtn.TextSize = 14
+    riseBtn.Font = Enum.Font.GothamBold
+    riseBtn.Parent = screenGui
+
+    -- Fall Button (Right side below rise)
+    local fallBtn = Instance.new("TextButton")
+    fallBtn.Name = "Fall"
+    fallBtn.Size = UDim2.new(0, 60, 0, 60)
+    fallBtn.Position = UDim2.new(1, -70, 1, -70)
+    fallBtn.BackgroundColor3 = Color3.fromRGB(70, 50, 50)
+    fallBtn.BorderSizePixel = 1
+    fallBtn.BorderColor3 = Color3.fromRGB(200, 100, 100)
+    fallBtn.Text = "DOWN"
+    fallBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+    fallBtn.TextSize = 12
+    fallBtn.Font = Enum.Font.GothamBold
+    fallBtn.Parent = screenGui
+
+    -- Speed Display
+    local speedLabel = Instance.new("TextLabel")
+    speedLabel.Name = "SpeedLabel"
+    speedLabel.Size = UDim2.new(0, 80, 0, 30)
+    speedLabel.Position = UDim2.new(0, 10, 0, 20)
+    speedLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    speedLabel.BorderSizePixel = 1
+    speedLabel.BorderColor3 = Color3.fromRGB(100, 150, 255)
+    speedLabel.Text = "Speed: 50"
+    speedLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+    speedLabel.TextSize = 12
+    speedLabel.Font = Enum.Font.Gotham
+    speedLabel.Parent = screenGui
+
+    return {
+        gui = screenGui,
+        flyButton = flyButton,
+        riseBtn = riseBtn,
+        fallBtn = fallBtn,
+        speedLabel = speedLabel,
+    }
+end
+
+-- Create PC Keyboard GUI
+local function createPCGUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "PCFlyGUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 100, 0, 60)
+    mainFrame.Position = UDim2.new(0.5, -50, 0.5, -30)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    mainFrame.BorderSizePixel = 2
+    mainFrame.BorderColor3 = Color3.fromRGB(100, 150, 255)
+    mainFrame.Active = true
+    mainFrame.Draggable = true
+    mainFrame.Parent = screenGui
+
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Name = "ToggleFly"
+    toggleBtn.Size = UDim2.new(0.9, 0, 1, -5)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0, 5)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    toggleBtn.BorderSizePixel = 1
+    toggleBtn.BorderColor3 = Color3.fromRGB(100, 100, 255)
+    toggleBtn.Text = "FLY"
+    toggleBtn.TextColor3 = Color3.fromRGB(100, 200, 255)
+    toggleBtn.TextSize = 18
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.Parent = mainFrame
+
+    return {
+        gui = screenGui,
+        toggleBtn = toggleBtn,
+    }
+end
+
+-- Fly Functions
+local function startFly()
+    if FlyModule.enabled then return end
+    FlyModule.enabled = true
+    
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not hrp or not hum then return end
+    
+    if FlyModule.connection then FlyModule.connection:Disconnect() end
+    
+    FlyModule.connection = RunService.RenderStepped:Connect(function()
+        if not FlyModule.enabled then return end
+        
+        local char = player.Character
+        if not char then 
+            FlyModule.enabled = false 
+            return 
+        end
+        
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChild("Humanoid")
+        if not hrp or not hum then 
+            FlyModule.enabled = false 
+            return 
+        end
+        
+        local cam = Camera
+        local camLook = cam.CFrame.LookVector
+        local camRight = cam.CFrame.RightVector
+        
+        -- Calculate movement based on camera direction
+        local moveDirection = (camLook * FlyModule.moveForward) + (camRight * FlyModule.moveSide)
+        
+        -- Add vertical movement
+        moveDirection = moveDirection + Vector3.new(0, FlyModule.moveUp, 0)
+        
+        -- Normalize to prevent faster diagonal movement
+        if moveDirection.Magnitude > 0 then
+            moveDirection = moveDirection.Unit
+        end
+        
+        -- Apply velocity
+        hrp.AssemblyLinearVelocity = moveDirection * FlyModule.speed
+        
+        -- Orient character to face camera direction
+        local newCFrame = CFrame.new(hrp.Position, hrp.Position + camLook)
+        hrp.CFrame = newCFrame
+        
+        hum:ChangeState(Enum.HumanoidStateType.Flying)
+    end)
+end
+
+local function stopFly()
+    if not FlyModule.enabled then return end
+    FlyModule.enabled = false
+    
+    if FlyModule.connection then
+        FlyModule.connection:Disconnect()
+        FlyModule.connection = nil
+    end
+    
+    local char = player.Character
+    if char then
+        local hum = char:FindFirstChild("Humanoid")
+        if hum then
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end
+end
+
+-- Initialize
+local guiElements
+if isMobile then
+    guiElements = createMobileControlsGUI()
+else
+    guiElements = createPCGUI()
+end
+
+-- Fly Button
+if isMobile then
+    guiElements.flyButton.MouseButton1Click:Connect(function()
+        if FlyModule.enabled then
+            stopFly()
+            guiElements.flyButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        else
+            startFly()
+            guiElements.flyButton.BackgroundColor3 = Color3.fromRGB(50, 100, 50)
+        end
+    end)
+
+    -- Rise/Fall buttons
+    guiElements.riseBtn.MouseButton1Down:Connect(function() FlyModule.moveUp = 1 end)
+    guiElements.riseBtn.MouseButton1Up:Connect(function() FlyModule.moveUp = 0 end)
+    guiElements.riseBtn.TouchBegan:Connect(function() FlyModule.moveUp = 1 end)
+    guiElements.riseBtn.TouchEnded:Connect(function() FlyModule.moveUp = 0 end)
+
+    guiElements.fallBtn.MouseButton1Down:Connect(function() FlyModule.moveUp = -1 end)
+    guiElements.fallBtn.MouseButton1Up:Connect(function() FlyModule.moveUp = 0 end)
+    guiElements.fallBtn.TouchBegan:Connect(function() FlyModule.moveUp = -1 end)
+    guiElements.fallBtn.TouchEnded:Connect(function() FlyModule.moveUp = 0 end)
+
+    -- Tilt device to move - using gyro/accelerometer if available
+    UserInputService.DeviceRotationChanged:Connect(function(rotation, cRotation)
+        FlyModule.tilt = rotation.Z
+        FlyModule.moveForward = -math.sin(rotation.X) * 1.5
+        FlyModule.moveSide = math.sin(rotation.Y) * 1.5
+    end)
+else
+    -- PC Toggle
+    guiElements.toggleBtn.MouseButton1Click:Connect(function()
+        if FlyModule.enabled then
+            stopFly()
+            guiElements.toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        else
+            startFly()
+            guiElements.toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 50)
+        end
+    end)
+
+    -- Keyboard Controls
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.KeyCode == Enum.KeyCode.W then FlyModule.moveForward = 1
+        elseif input.KeyCode == Enum.KeyCode.S then FlyModule.moveForward = -1
+        elseif input.KeyCode == Enum.KeyCode.A then FlyModule.moveSide = -1
+        elseif input.KeyCode == Enum.KeyCode.D then FlyModule.moveSide = 1
+        elseif input.KeyCode == Enum.KeyCode.Space then FlyModule.moveUp = 1
+        elseif input.KeyCode == Enum.KeyCode.LeftControl then FlyModule.moveUp = -1
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.W then FlyModule.moveForward = 0
+        elseif input.KeyCode == Enum.KeyCode.S then FlyModule.moveForward = 0
+        elseif input.KeyCode == Enum.KeyCode.A then FlyModule.moveSide = 0
+        elseif input.KeyCode == Enum.KeyCode.D then FlyModule.moveSide = 0
+        elseif input.KeyCode == Enum.KeyCode.Space then FlyModule.moveUp = 0
+        elseif input.KeyCode == Enum.KeyCode.LeftControl then FlyModule.moveUp = 0
+        end
+    end)
+end
+
+-- Character Respawn
+player.CharacterAdded:Connect(function()
+    if FlyModule.enabled then 
+        stopFly()
+        if guiElements.flyButton then
+            guiElements.flyButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        elseif guiElements.toggleBtn then
+            guiElements.toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        end
+    end
+end)
