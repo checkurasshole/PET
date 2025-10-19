@@ -57,6 +57,7 @@ Module.animalColors = {
 }
 Module.secretColor = Color3.fromRGB(255, 0, 255)
 
+-- Carpet boundary constants
 local CARPET_COLOR = Color3.fromRGB(196, 40, 28)
 local CARPET_SIZE = Vector3.new(20, 0.5, 401)
 
@@ -114,6 +115,7 @@ function Module.InitAntiAFK()
     end)
 end
 
+-- Enhanced carpet checking function
 function Module.IsOnCarpet(position)
     local carpet = workspace.Map:FindFirstChild("Carpet")
     if not carpet then return true end
@@ -134,6 +136,7 @@ function Module.IsAnimalOnCarpet(animalModel)
     return Module.IsOnCarpet(targetPart.Position)
 end
 
+-- Enhanced plot detection
 function Module.IsInMyPlot(position)
     local PlotController = require(ReplicatedStorage.Controllers.PlotController)
     local myPlot = PlotController:GetMyPlot()
@@ -159,51 +162,6 @@ function Module.IsInMyPlot(position)
     
     local distance = (position - plot:GetPivot().Position).Magnitude
     return distance <= 50
-end
-
-function Module.GetCenterOfPart(part)
-    if not part or not part:IsA("BasePart") then return nil end
-    return part.Position
-end
-
-function Module.GetCenterOfModel(model)
-    if not model or not model:IsA("Model") then return nil end
-    
-    local parts = {}
-    for _, desc in pairs(model:GetDescendants()) do
-        if desc:IsA("BasePart") then
-            table.insert(parts, desc)
-        end
-    end
-    
-    if #parts == 0 then
-        if model:IsA("BasePart") then
-            return Module.GetCenterOfPart(model)
-        end
-        return nil
-    end
-    
-    local minX, minY, minZ = math.huge, math.huge, math.huge
-    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
-    
-    for _, part in ipairs(parts) do
-        local pos = part.Position
-        local size = part.Size / 2
-        
-        minX = math.min(minX, pos.X - size.X)
-        minY = math.min(minY, pos.Y - size.Y)
-        minZ = math.min(minZ, pos.Z - size.Z)
-        
-        maxX = math.max(maxX, pos.X + size.X)
-        maxY = math.max(maxY, pos.Y + size.Y)
-        maxZ = math.max(maxZ, pos.Z + size.Z)
-    end
-    
-    return Vector3.new(
-        (minX + maxX) / 2,
-        (minY + maxY) / 2,
-        (minZ + maxZ) / 2
-    )
 end
 
 function Module.GenerateReservedServerCode(placeId)
@@ -488,6 +446,7 @@ function Module.SetupProximityDetection(callback)
     end)
 end
 
+-- Enhanced WalkToTarget with plot-aware pathfinding
 function Module.WalkToTarget(character, targetPos, options)
     local root = character:FindFirstChild("HumanoidRootPart")
     local humanoid = character:FindFirstChild("Humanoid")
@@ -500,6 +459,7 @@ function Module.WalkToTarget(character, targetPos, options)
     local maxWaitTime = options.maxWaitTime or 10
     
     if useSmartPathfinding and Module.IsInMyPlot(root.Position) then
+        -- Use pathfinding when inside plot
         local path = PathfindingService:CreatePath({
             AgentRadius = 2,
             AgentHeight = 5,
@@ -532,6 +492,7 @@ function Module.WalkToTarget(character, targetPos, options)
         end
     end
     
+    -- Direct movement (fallback or when outside plot)
     humanoid:MoveTo(targetPos)
     
     local timeout = 0
