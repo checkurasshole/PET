@@ -57,80 +57,8 @@ Module.animalColors = {
 }
 Module.secretColor = Color3.fromRGB(255, 0, 255)
 
--- Carpet boundary constants
 local CARPET_COLOR = Color3.fromRGB(196, 40, 28)
 local CARPET_SIZE = Vector3.new(20, 0.5, 401)
-
--- Floor detection colors and sizes
-local FLOOR_PATTERNS = {
-    {color = Color3.fromRGB(99, 95, 98), sizes = {
-        Vector3.new(17, 9.99996566772461, 2),
-        Vector3.new(6, 10, 2),
-        Vector3.new(13.128019332885742, 17, 0.25),
-        Vector3.new(49, 3.9999961853027344, 2)
-    }}
-}
-
-local function colorSimilar(c1, c2, tolerance)
-    tolerance = tolerance or 5
-    return math.abs(c1.R * 255 - c2.R * 255) <= tolerance and
-           math.abs(c1.G * 255 - c2.G * 255) <= tolerance and
-           math.abs(c1.B * 255 - c2.B * 255) <= tolerance
-end
-
-local function sizeMatches(size, targetSize, tolerance)
-    tolerance = tolerance or 0.5
-    return math.abs(size.X - targetSize.X) <= tolerance and
-           math.abs(size.Y - targetSize.Y) <= tolerance and
-           math.abs(size.Z - targetSize.Z) <= tolerance
-end
-
-function Module.FindFloorParts(plotDecorations)
-    local floors = {}
-    
-    if not plotDecorations then return floors end
-    
-    local function searchDescendants(obj)
-        for _, child in pairs(obj:GetChildren()) do
-            if child:IsA("BasePart") or child:IsA("MeshPart") then
-                local color = child.Color
-                for _, pattern in ipairs(FLOOR_PATTERNS) do
-                    if colorSimilar(color, pattern.color) then
-                        for _, targetSize in ipairs(pattern.sizes) do
-                            if sizeMatches(child.Size, targetSize) then
-                                table.insert(floors, child)
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-            
-            -- Recursively search children
-            searchDescendants(child)
-        end
-    end
-    
-    searchDescendants(plotDecorations)
-    return floors
-end
-
-function Module.GetFloorCenterPath(startPos, floors)
-    if #floors == 0 then return nil end
-    
-    -- Sort floors by distance from start position
-    table.sort(floors, function(a, b)
-        return (a.Position - startPos).Magnitude < (b.Position - startPos).Magnitude
-    end)
-    
-    -- Create waypoints through floor centers
-    local waypoints = {}
-    for _, floor in ipairs(floors) do
-        table.insert(waypoints, floor.Position + Vector3.new(0, floor.Size.Y / 2 + 3, 0))
-    end
-    
-    return waypoints
-end
 
 function Module.InitAntiAFK()
     task.spawn(function()
@@ -186,7 +114,6 @@ function Module.InitAntiAFK()
     end)
 end
 
--- Enhanced carpet checking function
 function Module.IsOnCarpet(position)
     local carpet = workspace.Map:FindFirstChild("Carpet")
     if not carpet then return true end
@@ -207,7 +134,6 @@ function Module.IsAnimalOnCarpet(animalModel)
     return Module.IsOnCarpet(targetPart.Position)
 end
 
--- Enhanced plot detection
 function Module.IsInMyPlot(position)
     local PlotController = require(ReplicatedStorage.Controllers.PlotController)
     local myPlot = PlotController:GetMyPlot()
@@ -235,17 +161,49 @@ function Module.IsInMyPlot(position)
     return distance <= 50
 end
 
-function Module.GetMyPlotDecorations()
-    local PlotController = require(ReplicatedStorage.Controllers.PlotController)
-    local myPlot = PlotController:GetMyPlot()
-    if not myPlot or not myPlot.PlotModel then return nil end
+function Module.GetCenterOfPart(part)
+    if not part or not part:IsA("BasePart") then return nil end
+    return part.Position
+end
+
+function Module.GetCenterOfModel(model)
+    if not model or not model:IsA("Model") then return nil end
     
-    local plotId = myPlot.PlotModel.Name
-    local plot = workspace.Plots:FindFirstChild(plotId)
+    local parts = {}
+    for _, desc in pairs(model:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            table.insert(parts, desc)
+        end
+    end
     
-    if not plot then return nil end
+    if #parts == 0 then
+        if model:IsA("BasePart") then
+            return Module.GetCenterOfPart(model)
+        end
+        return nil
+    end
     
-    return plot:FindFirstChild("Decorations")
+    local minX, minY, minZ = math.huge, math.huge, math.huge
+    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+    
+    for _, part in ipairs(parts) do
+        local pos = part.Position
+        local size = part.Size / 2
+        
+        minX = math.min(minX, pos.X - size.X)
+        minY = math.min(minY, pos.Y - size.Y)
+        minZ = math.min(minZ, pos.Z - size.Z)
+        
+        maxX = math.max(maxX, pos.X + size.X)
+        maxY = math.max(maxY, pos.Y + size.Y)
+        maxZ = math.max(maxZ, pos.Z + size.Z)
+    end
+    
+    return Vector3.new(
+        (minX + maxX) / 2,
+        (minY + maxY) / 2,
+        (minZ + maxZ) / 2
+    )
 end
 
 function Module.GenerateReservedServerCode(placeId)
@@ -530,7 +488,6 @@ function Module.SetupProximityDetection(callback)
     end)
 end
 
--- Enhanced WalkToTarget with floor-aware pathfinding
 function Module.WalkToTarget(character, targetPos, options)
     local root = character:FindFirstChild("HumanoidRootPart")
     local humanoid = character:FindFirstChild("Humanoid")
@@ -541,49 +498,8 @@ function Module.WalkToTarget(character, targetPos, options)
     local useSmartPathfinding = options.smartPathfinding ~= false
     local checkCarpet = options.checkCarpet or false
     local maxWaitTime = options.maxWaitTime or 10
-    local useFloorPathing = options.useFloorPathing or false
-    
-    -- Try floor-aware pathfinding first
-    if useFloorPathing then
-        local decorations = Module.GetMyPlotDecorations()
-        if decorations then
-            local floors = Module.FindFloorParts(decorations)
-            if #floors > 0 then
-                local floorWaypoints = Module.GetFloorCenterPath(root.Position, floors)
-                
-                if floorWaypoints and #floorWaypoints > 0 then
-                    for _, waypoint in ipairs(floorWaypoints) do
-                        if not character.Parent then break end
-                        
-                        humanoid:MoveTo(waypoint)
-                        
-                        local timeout = 0
-                        while (root.Position - waypoint).Magnitude > 5 and timeout < 3 do
-                            if not character.Parent then break end
-                            task.wait(0.1)
-                            timeout = timeout + 0.1
-                        end
-                        
-                        task.wait(0.2)
-                    end
-                    
-                    -- Now go to final target
-                    humanoid:MoveTo(targetPos)
-                    local timeout = 0
-                    while (root.Position - targetPos).Magnitude > 5 and character.Parent and timeout < maxWaitTime do
-                        if checkCarpet and not Module.IsOnCarpet(targetPos) then break end
-                        task.wait(0.1)
-                        timeout = timeout + 0.1
-                    end
-                    
-                    return (root.Position - targetPos).Magnitude <= 5
-                end
-            end
-        end
-    end
     
     if useSmartPathfinding and Module.IsInMyPlot(root.Position) then
-        -- Use pathfinding when inside plot
         local path = PathfindingService:CreatePath({
             AgentRadius = 2,
             AgentHeight = 5,
@@ -616,7 +532,6 @@ function Module.WalkToTarget(character, targetPos, options)
         end
     end
     
-    -- Direct movement (fallback or when outside plot)
     humanoid:MoveTo(targetPos)
     
     local timeout = 0
