@@ -57,6 +57,7 @@ Module.animalColors = {
 }
 Module.secretColor = Color3.fromRGB(255, 0, 255)
 
+-- Carpet boundary constants
 local CARPET_COLOR = Color3.fromRGB(196, 40, 28)
 local CARPET_SIZE = Vector3.new(20, 0.5, 401)
 
@@ -114,6 +115,7 @@ function Module.InitAntiAFK()
     end)
 end
 
+-- Enhanced carpet checking function
 function Module.IsOnCarpet(position)
     local carpet = workspace.Map:FindFirstChild("Carpet")
     if not carpet then return true end
@@ -134,6 +136,7 @@ function Module.IsAnimalOnCarpet(animalModel)
     return Module.IsOnCarpet(targetPart.Position)
 end
 
+-- Enhanced plot detection
 function Module.IsInMyPlot(position)
     local PlotController = require(ReplicatedStorage.Controllers.PlotController)
     local myPlot = PlotController:GetMyPlot()
@@ -443,6 +446,7 @@ function Module.SetupProximityDetection(callback)
     end)
 end
 
+-- Enhanced WalkToTarget with plot-aware pathfinding
 function Module.WalkToTarget(character, targetPos, options)
     local root = character:FindFirstChild("HumanoidRootPart")
     local humanoid = character:FindFirstChild("Humanoid")
@@ -453,56 +457,23 @@ function Module.WalkToTarget(character, targetPos, options)
     local useSmartPathfinding = options.smartPathfinding ~= false
     local checkCarpet = options.checkCarpet or false
     local maxWaitTime = options.maxWaitTime or 10
-    local fastMode = options.fastMode or false
-    
-    local distance = (root.Position - targetPos).Magnitude
-    
-    if distance < 30 or fastMode then
-        humanoid.WalkSpeed = 16
-        humanoid:MoveTo(targetPos)
-        
-        local timeout = 0
-        while (root.Position - targetPos).Magnitude > 5 and character.Parent and timeout < 3 do
-            if checkCarpet and not Module.IsOnCarpet(targetPos) then break end
-            task.wait(0.05)
-            timeout = timeout + 0.05
-        end
-        
-        return (root.Position - targetPos).Magnitude <= 5
-    end
     
     if useSmartPathfinding and Module.IsInMyPlot(root.Position) then
+        -- Use pathfinding when inside plot
         local path = PathfindingService:CreatePath({
             AgentRadius = 2,
             AgentHeight = 5,
             AgentCanJump = true,
             AgentCanClimb = false,
-            WaypointSpacing = 8,
-            Costs = {
-                Water = math.huge,
-                Danger = math.huge
-            }
+            WaypointSpacing = 4
         })
         
-        local pathSuccess = false
-        local pathTimeout = 0
-        
-        task.spawn(function()
-            path:ComputeAsync(root.Position, targetPos)
-            pathSuccess = true
-        end)
-        
-        while not pathSuccess and pathTimeout < 0.5 do
-            task.wait(0.05)
-            pathTimeout = pathTimeout + 0.05
-        end
+        path:ComputeAsync(root.Position, targetPos)
 
-        if pathSuccess and path.Status == Enum.PathStatus.Success then
+        if path.Status == Enum.PathStatus.Success then
             local waypoints = path:GetWaypoints()
             
-            local skipFactor = math.min(3, math.max(1, math.floor(#waypoints / 10)))
-            
-            for i = 1, #waypoints, skipFactor do
+            for i = 1, #waypoints do
                 if not character.Parent then break end
                 if checkCarpet and not Module.IsOnCarpet(targetPos) then break end
                 
@@ -510,10 +481,10 @@ function Module.WalkToTarget(character, targetPos, options)
                 humanoid:MoveTo(wp.Position)
                 
                 local timeout = 0
-                while (root.Position - wp.Position).Magnitude > 6 and timeout < 1 do
+                while (root.Position - wp.Position).Magnitude > 4 and timeout < 2 do
                     if not Module.IsInMyPlot(root.Position) then break end
-                    task.wait(0.05)
-                    timeout = timeout + 0.05
+                    task.wait(0.1)
+                    timeout = timeout + 0.1
                 end
             end
             
@@ -521,6 +492,7 @@ function Module.WalkToTarget(character, targetPos, options)
         end
     end
     
+    -- Direct movement (fallback or when outside plot)
     humanoid:MoveTo(targetPos)
     
     local timeout = 0
