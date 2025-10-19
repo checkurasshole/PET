@@ -61,6 +61,11 @@ Module.secretColor = Color3.fromRGB(255, 0, 255)
 local CARPET_COLOR = Color3.fromRGB(196, 40, 28)
 local CARPET_SIZE = Vector3.new(20, 0.5, 401)
 
+-- Anti-rubber band tracking
+local lastKnownGoodPosition = nil
+local rubberBandDetected = false
+local consecutiveRubberBands = 0
+
 function Module.InitAntiAFK()
     task.spawn(function()
         while true do
@@ -115,6 +120,32 @@ function Module.InitAntiAFK()
     end)
 end
 
+-- Detect rubber banding (anti-cheat teleport back)
+function Module.DetectRubberBand(character)
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    
+    local currentPos = root.Position
+    
+    if lastKnownGoodPosition then
+        local distance = (currentPos - lastKnownGoodPosition).Magnitude
+        local timeSinceLastCheck = 0.5 -- Check every 0.5 seconds
+        local maxReasonableSpeed = 50 -- Studs per second
+        
+        -- If we moved more than reasonably possible, we got rubber banded
+        if distance > (maxReasonableSpeed * timeSinceLastCheck * 2) then
+            rubberBandDetected = true
+            consecutiveRubberBands = consecutiveRubberBands + 1
+            return true
+        else
+            consecutiveRubberBands = math.max(0, consecutiveRubberBands - 1)
+        end
+    end
+    
+    lastKnownGoodPosition = currentPos
+    return false
+end
+
 -- Enhanced carpet checking function
 function Module.IsOnCarpet(position)
     local carpet = workspace.Map:FindFirstChild("Carpet")
@@ -162,6 +193,31 @@ function Module.IsInMyPlot(position)
     
     local distance = (position - plot:GetPivot().Position).Magnitude
     return distance <= 50
+end
+
+-- Recovery from rubber band
+function Module.RecoverFromRubberBand(character)
+    local humanoid = character:FindFirstChild("Humanoid")
+    local root = character:FindFirstChild("HumanoidRootPart")
+    
+    if not humanoid or not root then return false end
+    
+    -- Stop all movement
+    humanoid:MoveTo(root.Position)
+    task.wait(0.5)
+    
+    -- Clear velocity
+    if root:IsA("BasePart") then
+        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+    end
+    
+    task.wait(1)
+    
+    rubberBandDetected = false
+    lastKnownGoodPosition = root.Position
+    
+    return true
 end
 
 function Module.GenerateReservedServerCode(placeId)
@@ -446,63 +502,202 @@ function Module.SetupProximityDetection(callback)
     end)
 end
 
--- Enhanced WalkToTarget with plot-aware pathfinding
+-- HEAVILY IMPROVED WalkToTarget with anti-rubber band
 function Module.WalkToTarget(character, targetPos, options)
     local root = character:FindFirstChild("HumanoidRootPart")
     local humanoid = character:FindFirstChild("Humanoid")
     
-    if not root or not humanoid then return end
+    if not root or not humanoid then return false end
 
     options = options or {}
     local useSmartPathfinding = options.smartPathfinding ~= false
     local checkCarpet = options.checkCarpet or false
     local maxWaitTime = options.maxWaitTime or 10
+    local antiRubberBand = options.antiRubberBand ~= false
     
-    if useSmartPathfinding and Module.IsInMyPlot(root.Position) then
-        -- Use pathfinding when inside plot
+    -- Check for rubber band before starting
+    if antiRubberBand and Module.DetectRubberBand(character) then
+        Module.RecoverFromRubberBand(character)
+        return false
+    end
+    
+    -- If too many consecutive rubber bands, wait longer
+    if consecutiveRubberBands > 3 then
+        task.wait(2)
+        consecutiveRubberBands = 0
+    end
+    
+    local startPos = root.Position
+    local targetDistance = (startPos - targetPos).Magnitude
+    
+    -- Use raycast to check if path is clear
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {character}
+    
+    local directPathClear = false
+    local rayResult = workspace:Raycast(startPos, (targetPos - startPos).Unit * targetDistance, raycastParams)
+    if not rayResult then
+        directPathClear = true
+    end
+    
+    -- If path is clear and we're close, use direct movement
+    if directPathClear and targetDistance < 30 then
+        humanoid:MoveTo(targetPos)
+        
+        local timeout = 0
+        local lastDistance = targetDistance
+        local stuckTime = 0
+        
+        while (root.Position - targetPos).Magnitude > 5 and character.Parent and timeout < maxWaitTime do
+            if checkCarpet and not Module.IsOnCarpet(targetPos) then break end
+            
+            -- Check if we're stuck
+            local currentDistance = (root.Position - targetPos).Magnitude
+            if math.abs(currentDistance - lastDistance) < 0.5 then
+                stuckTime = stuckTime + 0.2
+                if stuckTime > 2 then
+                    -- We're stuck, try pathfinding instead
+                    break
+                end
+            else
+                stuckTime = 0
+            end
+            lastDistance = currentDistance
+            
+            -- Anti-rubber band check
+            if antiRubberBand and Module.DetectRubberBand(character) then
+                Module.RecoverFromRubberBand(character)
+                return false
+            end
+            
+            task.wait(0.2)
+            timeout = timeout + 0.2
+        end
+        
+        if (root.Position - targetPos).Magnitude <= 5 then
+            return true
+        end
+    end
+    
+    -- Use pathfinding for complex routes or when stuck
+    if useSmartPathfinding then
         local path = PathfindingService:CreatePath({
             AgentRadius = 2,
             AgentHeight = 5,
             AgentCanJump = true,
             AgentCanClimb = false,
-            WaypointSpacing = 4
+            WaypointSpacing = 4,
+            Costs = {
+                Water = math.huge,
+                Danger = math.huge
+            }
         })
         
-        path:ComputeAsync(root.Position, targetPos)
-
-        if path.Status == Enum.PathStatus.Success then
+        local success, errorMsg = pcall(function()
+            path:ComputeAsync(root.Position, targetPos)
+        end)
+        
+        if success and path.Status == Enum.PathStatus.Success then
             local waypoints = path:GetWaypoints()
             
-            for i = 1, #waypoints do
+            -- Skip the first waypoint if we're already close to it
+            local startWaypoint = 1
+            if #waypoints > 1 and (root.Position - waypoints[1].Position).Magnitude < 5 then
+                startWaypoint = 2
+            end
+            
+            for i = startWaypoint, #waypoints do
                 if not character.Parent then break end
                 if checkCarpet and not Module.IsOnCarpet(targetPos) then break end
                 
+                -- Check for rubber band
+                if antiRubberBand and Module.DetectRubberBand(character) then
+                    Module.RecoverFromRubberBand(character)
+                    return false
+                end
+                
                 local wp = waypoints[i]
+                
+                -- Handle jump waypoints
+                if wp.Action == Enum.PathWaypointAction.Jump then
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    task.wait(0.3)
+                end
+                
                 humanoid:MoveTo(wp.Position)
                 
-                local timeout = 0
-                while (root.Position - wp.Position).Magnitude > 4 and timeout < 2 do
-                    if not Module.IsInMyPlot(root.Position) then break end
-                    task.wait(0.1)
-                    timeout = timeout + 0.1
+                local wpTimeout = 0
+                local lastWpDistance = (root.Position - wp.Position).Magnitude
+                local wpStuckTime = 0
+                
+                while (root.Position - wp.Position).Magnitude > 4 and wpTimeout < 4 do
+                    -- Check if player left plot mid-path
+                    if Module.IsInMyPlot(targetPos) and not Module.IsInMyPlot(root.Position) then
+                        break
+                    end
+                    
+                    -- Check if stuck at waypoint
+                    local currentWpDistance = (root.Position - wp.Position).Magnitude
+                    if math.abs(currentWpDistance - lastWpDistance) < 0.3 then
+                        wpStuckTime = wpStuckTime + 0.15
+                        if wpStuckTime > 1.5 then
+                            -- Skip this waypoint if stuck
+                            break
+                        end
+                    else
+                        wpStuckTime = 0
+                    end
+                    lastWpDistance = currentWpDistance
+                    
+                    -- Anti-rubber band check during waypoint travel
+                    if antiRubberBand and Module.DetectRubberBand(character) then
+                        Module.RecoverFromRubberBand(character)
+                        return false
+                    end
+                    
+                    task.wait(0.15)
+                    wpTimeout = wpTimeout + 0.15
                 end
+                
+                -- Small delay between waypoints to appear more natural
+                task.wait(0.1)
             end
             
-            return true
+            -- Final check if we reached the target
+            return (root.Position - targetPos).Magnitude <= 8
+        else
+            -- Pathfinding failed, try direct movement as last resort
+            humanoid:MoveTo(targetPos)
+            task.wait(1)
+            return (root.Position - targetPos).Magnitude <= 10
         end
     end
     
-    -- Direct movement (fallback or when outside plot)
+    -- Fallback to basic movement
     humanoid:MoveTo(targetPos)
-    
     local timeout = 0
     while (root.Position - targetPos).Magnitude > 5 and character.Parent and timeout < maxWaitTime do
-        if checkCarpet and not Module.IsOnCarpet(targetPos) then break end
-        task.wait(0.1)
-        timeout = timeout + 0.1
+        if antiRubberBand and Module.DetectRubberBand(character) then
+            Module.RecoverFromRubberBand(character)
+            return false
+        end
+        task.wait(0.2)
+        timeout = timeout + 0.2
     end
     
-    return (root.Position - targetPos).Magnitude <= 5
+    return (root.Position - targetPos).Magnitude <= 10
+end
+
+-- Specialized function for collecting money (optimized for multiple targets)
+function Module.WalkToCollectMoney(character, targetPos)
+    -- Use slower, more careful pathfinding for money collection
+    return Module.WalkToTarget(character, targetPos, {
+        smartPathfinding = true,
+        checkCarpet = false,
+        maxWaitTime = 8,
+        antiRubberBand = true
+    })
 end
 
 function Module.CreateTracer(name)
