@@ -1,0 +1,226 @@
+local Players = game:GetService('Players')
+local RunService = game:GetService('RunService')
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- Detect mobile
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+local FlyModule = {
+    enabled = false,
+    speed = 25,
+    connection = nil,
+    CONTROL = {F = 0, B = 0, L = 0, R = 0, UP = 0, DOWN = 0},
+}
+
+-- Create GUI
+local function createFlyGUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "FlyGUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 100, 0, 60)
+    mainFrame.Position = UDim2.new(0.5, -50, 0.5, -30)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    mainFrame.BorderSizePixel = 2
+    mainFrame.BorderColor3 = Color3.fromRGB(100, 150, 255)
+    mainFrame.Active = true
+    mainFrame.Draggable = true
+    mainFrame.Parent = screenGui
+
+    -- Toggle Fly Button
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Name = "ToggleFly"
+    toggleBtn.Size = UDim2.new(0.9, 0, 1, -5)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0, 5)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    toggleBtn.BorderSizePixel = 1
+    toggleBtn.BorderColor3 = Color3.fromRGB(100, 100, 255)
+    toggleBtn.Text = "FLY"
+    toggleBtn.TextColor3 = Color3.fromRGB(100, 200, 255)
+    toggleBtn.TextSize = 18
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.Parent = mainFrame
+
+    return {
+        gui = screenGui,
+        toggleBtn = toggleBtn,
+        mainFrame = mainFrame,
+    }
+end
+
+-- Fly Functions for Desktop
+local function startFlyDesktop()
+    if FlyModule.enabled then return end
+    
+    FlyModule.enabled = true
+    
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not hrp or not hum then return end
+    
+    if FlyModule.connection then FlyModule.connection:Disconnect() end
+    
+    FlyModule.connection = RunService.RenderStepped:Connect(function()
+        if not FlyModule.enabled then return end
+        
+        local char = player.Character
+        if not char then 
+            FlyModule.enabled = false 
+            return 
+        end
+        
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChild("Humanoid")
+        if not hrp or not hum then 
+            FlyModule.enabled = false 
+            return 
+        end
+        
+        local cam = workspace.CurrentCamera
+        local moveVelocity = Vector3.new(0, 0, 0)
+        
+        if FlyModule.CONTROL.L + FlyModule.CONTROL.R ~= 0 or FlyModule.CONTROL.F + FlyModule.CONTROL.B ~= 0 then
+            moveVelocity = ((cam.CFrame.LookVector * (FlyModule.CONTROL.F + FlyModule.CONTROL.B)) + 
+                           (cam.CFrame.RightVector * (FlyModule.CONTROL.L + FlyModule.CONTROL.R))).Unit * FlyModule.speed
+        end
+        
+        if FlyModule.CONTROL.UP == 1 then
+            moveVelocity = moveVelocity + Vector3.new(0, FlyModule.speed, 0)
+        elseif FlyModule.CONTROL.DOWN == 1 then
+            moveVelocity = moveVelocity - Vector3.new(0, FlyModule.speed, 0)
+        end
+        
+        hrp.AssemblyLinearVelocity = moveVelocity
+        hum:ChangeState(Enum.HumanoidStateType.Flying)
+    end)
+end
+
+-- Fly Functions for Mobile (camera-based)
+local function startFlyMobile()
+    if FlyModule.enabled then return end
+    
+    FlyModule.enabled = true
+    
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not hrp or not hum then return end
+    
+    if FlyModule.connection then FlyModule.connection:Disconnect() end
+    
+    FlyModule.connection = RunService.RenderStepped:Connect(function()
+        if not FlyModule.enabled then return end
+        
+        local char = player.Character
+        if not char then 
+            FlyModule.enabled = false 
+            return 
+        end
+        
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChild("Humanoid")
+        if not hrp or not hum then 
+            FlyModule.enabled = false 
+            return 
+        end
+        
+        local cam = workspace.CurrentCamera
+        
+        -- Move in camera direction at set speed
+        local moveVelocity = cam.CFrame.LookVector * FlyModule.speed
+        
+        hrp.AssemblyLinearVelocity = moveVelocity
+        hum:ChangeState(Enum.HumanoidStateType.Flying)
+    end)
+end
+
+local function stopFly()
+    if not FlyModule.enabled then return end
+    
+    FlyModule.enabled = false
+    
+    if FlyModule.connection then
+        FlyModule.connection:Disconnect()
+        FlyModule.connection = nil
+    end
+    
+    local char = player.Character
+    if char then
+        local hum = char:FindFirstChild("Humanoid")
+        if hum then
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end
+end
+
+-- Initialize
+local guiElements = createFlyGUI()
+
+-- Toggle Button Click
+guiElements.toggleBtn.MouseButton1Click:Connect(function()
+    if FlyModule.enabled then
+        stopFly()
+        guiElements.toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    else
+        if isMobile then
+            startFlyMobile()
+        else
+            startFlyDesktop()
+        end
+        guiElements.toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 50)
+    end
+end)
+
+-- Keyboard Controls (Desktop only)
+if not isMobile then
+    UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        
+        if input.KeyCode == Enum.KeyCode.W then
+            FlyModule.CONTROL.F = 1
+        elseif input.KeyCode == Enum.KeyCode.S then
+            FlyModule.CONTROL.B = -1
+        elseif input.KeyCode == Enum.KeyCode.A then
+            FlyModule.CONTROL.L = -1
+        elseif input.KeyCode == Enum.KeyCode.D then
+            FlyModule.CONTROL.R = 1
+        elseif input.KeyCode == Enum.KeyCode.Space then
+            FlyModule.CONTROL.UP = 1
+        elseif input.KeyCode == Enum.KeyCode.LeftControl then
+            FlyModule.CONTROL.DOWN = 1
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.W then
+            FlyModule.CONTROL.F = 0
+        elseif input.KeyCode == Enum.KeyCode.S then
+            FlyModule.CONTROL.B = 0
+        elseif input.KeyCode == Enum.KeyCode.A then
+            FlyModule.CONTROL.L = 0
+        elseif input.KeyCode == Enum.KeyCode.D then
+            FlyModule.CONTROL.R = 0
+        elseif input.KeyCode == Enum.KeyCode.Space then
+            FlyModule.CONTROL.UP = 0
+        elseif input.KeyCode == Enum.KeyCode.LeftControl then
+            FlyModule.CONTROL.DOWN = 0
+        end
+    end)
+end
+
+-- Stop fly on character respawn
+player.CharacterAdded:Connect(function()
+    if FlyModule.enabled then 
+        stopFly()
+        guiElements.toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    end
+end)
