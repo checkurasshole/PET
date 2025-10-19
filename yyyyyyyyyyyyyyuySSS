@@ -11,6 +11,9 @@ local StarterGui = game:GetService("StarterGui")
 local player = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
+-- Device Detection
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
 PetHunterModule.SecretPets = {
     'La Vacca Saturno Saturnita', 'Los Tralaleritos', 'Graipuss Medussi',
     'La Grande Combinasion', 'Sammyni Spyderini', 'Garama and Madundung',
@@ -631,7 +634,57 @@ function PetHunterModule.ServerHop(config, onNotify)
     return false
 end
 
-function PetHunterModule.StartFly()
+-- Fly Functions for Desktop
+local function startFlyDesktop()
+    if FlyModule.enabled then return end
+    
+    FlyModule.enabled = true
+    
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not hrp or not hum then return end
+    
+    if FlyModule.connection then FlyModule.connection:Disconnect() end
+    
+    FlyModule.connection = RunService.RenderStepped:Connect(function()
+        if not FlyModule.enabled then return end
+        
+        local char = player.Character
+        if not char then 
+            FlyModule.enabled = false 
+            return 
+        end
+        
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChild("Humanoid")
+        if not hrp or not hum then 
+            FlyModule.enabled = false 
+            return 
+        end
+        
+        local cam = workspace.CurrentCamera
+        local moveVelocity = Vector3.new(0, 0, 0)
+        
+        if FlyModule.CONTROL.L + FlyModule.CONTROL.R ~= 0 or FlyModule.CONTROL.F + FlyModule.CONTROL.B ~= 0 then
+            moveVelocity = ((cam.CFrame.LookVector * (FlyModule.CONTROL.F + FlyModule.CONTROL.B)) + 
+                           (cam.CFrame.RightVector * (FlyModule.CONTROL.L + FlyModule.CONTROL.R))).Unit * FlyModule.speed
+        end
+        
+        if FlyModule.CONTROL.UP == 1 then
+            moveVelocity = moveVelocity + Vector3.new(0, FlyModule.speed, 0)
+        elseif FlyModule.CONTROL.DOWN == 1 then
+            moveVelocity = moveVelocity - Vector3.new(0, FlyModule.speed, 0)
+        end
+        
+        hrp.AssemblyLinearVelocity = moveVelocity
+        hum:ChangeState(Enum.HumanoidStateType.Flying)
+    end)
+end
+
+-- Fly Functions for Mobile (camera-based)
+local function startFlyMobile()
     if FlyModule.enabled then return end
     
     FlyModule.enabled = true
@@ -662,22 +715,20 @@ function PetHunterModule.StartFly()
         
         local cam = workspace.CurrentCamera
         
-        local moveVelocity = Vector3.new(0, 0, 0)
-        
-        if FlyModule.CONTROL.L + FlyModule.CONTROL.R ~= 0 or FlyModule.CONTROL.F + FlyModule.CONTROL.B ~= 0 then
-            moveVelocity = ((cam.CFrame.LookVector * (FlyModule.CONTROL.F + FlyModule.CONTROL.B)) + 
-                           (cam.CFrame.RightVector * (FlyModule.CONTROL.L + FlyModule.CONTROL.R))).Unit * FlyModule.speed
-        end
-        
-        if FlyModule.CONTROL.UP == 1 then
-            moveVelocity = moveVelocity + Vector3.new(0, FlyModule.speed, 0)
-        elseif FlyModule.CONTROL.DOWN == 1 then
-            moveVelocity = moveVelocity - Vector3.new(0, FlyModule.speed, 0)
-        end
+        -- Move in camera direction at set speed
+        local moveVelocity = cam.CFrame.LookVector * FlyModule.speed
         
         hrp.AssemblyLinearVelocity = moveVelocity
         hum:ChangeState(Enum.HumanoidStateType.Flying)
     end)
+end
+
+function PetHunterModule.StartFly()
+    if isMobile then
+        startFlyMobile()
+    else
+        startFlyDesktop()
+    end
 end
 
 function PetHunterModule.StopFly()
@@ -721,39 +772,69 @@ function PetHunterModule.JumpBoost(amount)
 end
 
 function PetHunterModule.InitializeFlyControls()
-    UserInputService.InputBegan:Connect(function(input, gpe)
-        if gpe then return end
+    if isMobile then
+        -- Mobile controls: simplified touch-based input
+        UserInputService.TouchMoved:Connect(function(input, gpe)
+            if not FlyModule.enabled then return end
+            
+            -- Touch swipe left/right for horizontal movement
+            local touchPos = input.Position
+            local screenSize = Camera.ViewportSize
+            
+            if touchPos.X < screenSize.X / 3 then
+                FlyModule.CONTROL.L = -1
+                FlyModule.CONTROL.R = 0
+            elseif touchPos.X > screenSize.X * 2 / 3 then
+                FlyModule.CONTROL.R = 1
+                FlyModule.CONTROL.L = 0
+            else
+                FlyModule.CONTROL.L = 0
+                FlyModule.CONTROL.R = 0
+            end
+        end)
         
-        if input.KeyCode == Enum.KeyCode.W then
-            FlyModule.CONTROL.F = 1
-        elseif input.KeyCode == Enum.KeyCode.S then
-            FlyModule.CONTROL.B = -1
-        elseif input.KeyCode == Enum.KeyCode.A then
-            FlyModule.CONTROL.L = -1
-        elseif input.KeyCode == Enum.KeyCode.D then
-            FlyModule.CONTROL.R = 1
-        elseif input.KeyCode == Enum.KeyCode.Space then
-            FlyModule.CONTROL.UP = 1
-        elseif input.KeyCode == Enum.KeyCode.LeftControl then
-            FlyModule.CONTROL.DOWN = 1
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.KeyCode == Enum.KeyCode.W then
-            FlyModule.CONTROL.F = 0
-        elseif input.KeyCode == Enum.KeyCode.S then
-            FlyModule.CONTROL.B = 0
-        elseif input.KeyCode == Enum.KeyCode.A then
+        UserInputService.TouchEnded:Connect(function(input, gpe)
             FlyModule.CONTROL.L = 0
-        elseif input.KeyCode == Enum.KeyCode.D then
             FlyModule.CONTROL.R = 0
-        elseif input.KeyCode == Enum.KeyCode.Space then
-            FlyModule.CONTROL.UP = 0
-        elseif input.KeyCode == Enum.KeyCode.LeftControl then
-            FlyModule.CONTROL.DOWN = 0
-        end
-    end)
+            FlyModule.CONTROL.F = 0
+            FlyModule.CONTROL.B = 0
+        end)
+    else
+        -- Desktop keyboard controls
+        UserInputService.InputBegan:Connect(function(input, gpe)
+            if gpe then return end
+            
+            if input.KeyCode == Enum.KeyCode.W then
+                FlyModule.CONTROL.F = 1
+            elseif input.KeyCode == Enum.KeyCode.S then
+                FlyModule.CONTROL.B = -1
+            elseif input.KeyCode == Enum.KeyCode.A then
+                FlyModule.CONTROL.L = -1
+            elseif input.KeyCode == Enum.KeyCode.D then
+                FlyModule.CONTROL.R = 1
+            elseif input.KeyCode == Enum.KeyCode.Space then
+                FlyModule.CONTROL.UP = 1
+            elseif input.KeyCode == Enum.KeyCode.LeftControl then
+                FlyModule.CONTROL.DOWN = 1
+            end
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+            if input.KeyCode == Enum.KeyCode.W then
+                FlyModule.CONTROL.F = 0
+            elseif input.KeyCode == Enum.KeyCode.S then
+                FlyModule.CONTROL.B = 0
+            elseif input.KeyCode == Enum.KeyCode.A then
+                FlyModule.CONTROL.L = 0
+            elseif input.KeyCode == Enum.KeyCode.D then
+                FlyModule.CONTROL.R = 0
+            elseif input.KeyCode == Enum.KeyCode.Space then
+                FlyModule.CONTROL.UP = 0
+            elseif input.KeyCode == Enum.KeyCode.LeftControl then
+                FlyModule.CONTROL.DOWN = 0
+            end
+        end)
+    end
 
     player.CharacterAdded:Connect(function()
         if FlyModule.enabled then 
