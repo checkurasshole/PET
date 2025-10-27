@@ -1,0 +1,459 @@
+local Module = {}
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+
+-- Module Data
+Module.Data = {
+    autoAttackEnabled = false,
+    attackSpeed = 0.1,
+    attackRange = 50,
+    rangeCircleEnabled = false,
+    walkSpeedEnabled = false,
+    jumpPowerEnabled = false,
+    flyEnabled = false,
+    noclipEnabled = false,
+    walkSpeedValue = 16,
+    jumpPowerValue = 50,
+    flySpeed = 50,
+    detectionDisabled = false,
+    combatMode = false,
+    
+    rangeCircle = nil,
+    rangeCircleConnection = nil,
+    flyConnection = nil,
+    noclipConnection = nil,
+    statusLabel = nil,
+    
+    mobFolder = workspace.Live.MobModel,
+    m1Remote = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Event"):WaitForChild("Combat"):WaitForChild("M1"),
+}
+
+-- Game Modules
+Module.GameModules = {
+    Equip = require(ReplicatedStorage.GuiUtils.Equip),
+    Pet = require(ReplicatedStorage.GuiUtils.Pet),
+    Inventory = require(ReplicatedStorage.GuiUtils.Inventory),
+    Upgrade = require(ReplicatedStorage.GuiUtils.Upgrade),
+    Quest = require(ReplicatedStorage.GuiUtils.Quest),
+    QuestHelper = require(ReplicatedStorage.Config.QuestHelper),
+}
+
+-- Anti-Detection Functions
+function Module.toggleDetection(state)
+    if state then
+        setfflag("WorldStepMax", "-99999999999999")
+        wait(0.5)
+        setfflag("WorldStepMax", "-1")
+        Module.Data.detectionDisabled = true
+    else
+        setfflag("WorldStepMax", "0.016")
+        Module.Data.detectionDisabled = false
+    end
+end
+
+function Module.toggleCombat()
+    Module.Data.combatMode = not Module.Data.combatMode
+    Module.toggleDetection(not Module.Data.combatMode)
+    
+    if Module.Data.statusLabel then
+        if Module.Data.combatMode then
+            Module.Data.statusLabel:SetText("Status: Active")
+        else
+            Module.Data.statusLabel:SetText("Status: Inactive")
+        end
+    end
+end
+
+function Module.setupCombatKeybind()
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        
+        if input.KeyCode == Enum.KeyCode.E then
+            Module.toggleCombat()
+        end
+    end)
+end
+
+-- Range Circle Functions
+function Module.createRangeCircle()
+    if Module.Data.rangeCircle then
+        Module.Data.rangeCircle:Destroy()
+    end
+    
+    local circle = Instance.new("Part")
+    circle.Name = "RangeCircle"
+    circle.Size = Vector3.new(0.5, 0.5, 0.5)
+    circle.Anchored = true
+    circle.CanCollide = false
+    circle.Transparency = 1
+    circle.Parent = workspace
+    
+    local decal = Instance.new("SurfaceGui")
+    decal.Face = Enum.NormalId.Top
+    decal.AlwaysOnTop = true
+    decal.Parent = circle
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundTransparency = 1
+    frame.Parent = decal
+    
+    local uiCorner = Instance.new("UICorner")
+    uiCorner.CornerRadius = UDim.new(1, 0)
+    uiCorner.Parent = frame
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(0, 255, 0)
+    stroke.Thickness = 3
+    stroke.Transparency = 0.3
+    stroke.Parent = frame
+    
+    Module.Data.rangeCircle = circle
+    
+    if Module.Data.rangeCircleConnection then
+        Module.Data.rangeCircleConnection:Disconnect()
+    end
+    
+    Module.Data.rangeCircleConnection = RunService.Heartbeat:Connect(function()
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local pos = char.HumanoidRootPart.Position
+            circle.Size = Vector3.new(Module.Data.attackRange * 2, 0.5, Module.Data.attackRange * 2)
+            circle.CFrame = CFrame.new(pos.X, pos.Y - 2.5, pos.Z)
+        end
+    end)
+end
+
+function Module.removeRangeCircle()
+    if Module.Data.rangeCircle then
+        Module.Data.rangeCircle:Destroy()
+        Module.Data.rangeCircle = nil
+    end
+    if Module.Data.rangeCircleConnection then
+        Module.Data.rangeCircleConnection:Disconnect()
+        Module.Data.rangeCircleConnection = nil
+    end
+end
+
+-- Combat Functions
+function Module.getNearestMobs()
+    local char = player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return {} end
+    
+    local myPos = char.HumanoidRootPart.Position
+    local nearbyMobs = {}
+    
+    for _, mob in pairs(Module.Data.mobFolder:GetChildren()) do
+        if mob:IsA("Model") and mob.PrimaryPart then
+            local distance = (mob.PrimaryPart.Position - myPos).Magnitude
+            if distance <= Module.Data.attackRange then
+                table.insert(nearbyMobs, mob)
+            end
+        end
+    end
+    
+    return nearbyMobs
+end
+
+function Module.attackNearestMobs()
+    local mobs = Module.getNearestMobs()
+    
+    for _, mob in pairs(mobs) do
+        pcall(function()
+            Module.Data.m1Remote:FireServer({mob.Name})
+        end)
+    end
+end
+
+function Module.startAutoAttack()
+    spawn(function()
+        while Module.Data.autoAttackEnabled do
+            Module.attackNearestMobs()
+            task.wait(Module.Data.attackSpeed)
+        end
+    end)
+end
+
+-- Movement Functions
+function Module.startFly()
+    local char = player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    
+    local hrp = char.HumanoidRootPart
+    
+    local bg = Instance.new("BodyGyro")
+    bg.P = 9e4
+    bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bg.CFrame = hrp.CFrame
+    bg.Parent = hrp
+    
+    local bv = Instance.new("BodyVelocity")
+    bv.Velocity = Vector3.new(0, 0, 0)
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bv.Parent = hrp
+    
+    if Module.Data.flyConnection then
+        Module.Data.flyConnection:Disconnect()
+    end
+    
+    Module.Data.flyConnection = RunService.Heartbeat:Connect(function()
+        if not Module.Data.flyEnabled or not char or not char:FindFirstChild("HumanoidRootPart") then
+            if bg then bg:Destroy() end
+            if bv then bv:Destroy() end
+            if Module.Data.flyConnection then Module.Data.flyConnection:Disconnect() end
+            return
+        end
+        
+        local cam = workspace.CurrentCamera
+        local moveDirection = Vector3.new(0, 0, 0)
+        
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            moveDirection = moveDirection + (cam.CFrame.LookVector)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            moveDirection = moveDirection - (cam.CFrame.LookVector)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            moveDirection = moveDirection - (cam.CFrame.RightVector)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            moveDirection = moveDirection + (cam.CFrame.RightVector)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            moveDirection = moveDirection + Vector3.new(0, 1, 0)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+            moveDirection = moveDirection - Vector3.new(0, 1, 0)
+        end
+        
+        if moveDirection.Magnitude > 0 then
+            moveDirection = moveDirection.Unit
+        end
+        
+        bv.Velocity = moveDirection * Module.Data.flySpeed
+        bg.CFrame = cam.CFrame
+        hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + cam.CFrame.LookVector)
+    end)
+end
+
+function Module.stopFly()
+    Module.Data.flyEnabled = false
+    if Module.Data.flyConnection then
+        Module.Data.flyConnection:Disconnect()
+        Module.Data.flyConnection = nil
+    end
+    
+    local char = player.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        local hrp = char.HumanoidRootPart
+        for _, v in pairs(hrp:GetChildren()) do
+            if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then
+                v:Destroy()
+            end
+        end
+    end
+end
+
+function Module.startNoclip()
+    if Module.Data.noclipConnection then
+        Module.Data.noclipConnection:Disconnect()
+    end
+    
+    Module.Data.noclipConnection = RunService.Stepped:Connect(function()
+        if not Module.Data.noclipEnabled then
+            if Module.Data.noclipConnection then
+                Module.Data.noclipConnection:Disconnect()
+                Module.Data.noclipConnection = nil
+            end
+            return
+        end
+        
+        local char = player.Character
+        if char then
+            for _, part in pairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+end
+
+function Module.stopNoclip()
+    Module.Data.noclipEnabled = false
+    if Module.Data.noclipConnection then
+        Module.Data.noclipConnection:Disconnect()
+        Module.Data.noclipConnection = nil
+    end
+    
+    local char = player.Character
+    if char then
+        for _, part in pairs(char:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                part.CanCollide = true
+            end
+        end
+    end
+end
+
+function Module.setupMovementLoop()
+    RunService.Heartbeat:Connect(function()
+        if Module.Data.walkSpeedEnabled then
+            local char = player.Character
+            if char and char:FindFirstChild("Humanoid") then
+                char.Humanoid.WalkSpeed = Module.Data.walkSpeedValue
+            end
+        end
+        
+        if Module.Data.jumpPowerEnabled then
+            local char = player.Character
+            if char and char:FindFirstChild("Humanoid") then
+                char.Humanoid.JumpPower = Module.Data.jumpPowerValue
+            end
+        end
+    end)
+end
+
+-- Equipment Functions
+function Module.equipBestItems()
+    local itemList = {}
+    local equipSlots = {"Weapon", "Hat", "Body", "Leg", "Foot", "Shield", "Acc"}
+    
+    for _, item in pairs(Module.GameModules.Equip.getItemData()) do
+        local itemType = item.type
+        local powerValue = (item.Damage or 0) + (item.Health or 0) + (item.Defense or 0)
+        
+        if not itemList[itemType] then
+            itemList[itemType] = {}
+        end
+        
+        table.insert(itemList[itemType], {
+            uuid = item.uuid,
+            power = powerValue
+        })
+    end
+    
+    for _, slotType in ipairs(equipSlots) do
+        if itemList[slotType] then
+            table.sort(itemList[slotType], function(a, b)
+                return a.power > b.power
+            end)
+            
+            local bestItem = itemList[slotType][1]
+            if bestItem then
+                ReplicatedStorage.Remote.Event.Equip:WaitForChild("[C-S]TryEquip"):FireServer(
+                    bestItem.uuid,
+                    slotType
+                )
+                task.wait(0.1)
+            end
+        end
+    end
+end
+
+-- Pet Functions
+function Module.equipBestPets()
+    local petList = {}
+    local maxPets = Module.GameModules.Inventory.getInventorySpace()
+    
+    for petId, petData in pairs(Module.GameModules.Pet.getData().freepool) do
+        table.insert(petList, {
+            id = petId,
+            power = Module.GameModules.Pet.getOnePetAdd(petData)
+        })
+    end
+    
+    for petId, petData in pairs(Module.GameModules.Pet.getData().racepool) do
+        table.insert(petList, {
+            id = petId,
+            power = Module.GameModules.Pet.getOnePetAdd(petData)
+        })
+    end
+    
+    table.sort(petList, function(a, b)
+        return a.power > b.power
+    end)
+    
+    local petsToEquip = {}
+    for i = 1, math.min(maxPets, #petList) do
+        petsToEquip[petList[i].id] = true
+    end
+    
+    ReplicatedStorage.Remote.Event.Pet:WaitForChild("[C-S]TryEquipBest"):FireServer(petsToEquip)
+    
+    return maxPets
+end
+
+function Module.removeAllPets()
+    ReplicatedStorage.Remote.Event.Pet:WaitForChild("[C-S]TryUnEquipAll"):FireServer()
+end
+
+-- Egg Functions
+function Module.buyEgg(eggType)
+    pcall(function()
+        local args = {eggType, 1}
+        ReplicatedStorage.Remote.Function.Luck:WaitForChild("[C-S]DoLuck"):InvokeServer(unpack(args))
+    end)
+end
+
+-- Stats Functions
+function Module.addStatPoints(statType, points)
+    if points > 0 then
+        ReplicatedStorage.Remote.Event.Upgrade:WaitForChild("[C-S]TryAddPoint"):FireServer(statType, points)
+    end
+end
+
+function Module.resetStats()
+    ReplicatedStorage.Remote.Event.Upgrade:WaitForChild("[C-S]TryReset"):FireServer()
+end
+
+-- Rebirth Functions
+function Module.doRebirth()
+    pcall(function()
+        ReplicatedStorage.Remote.Event.Rebirth:WaitForChild("[C-S]TryRebirth"):FireServer()
+    end)
+end
+
+-- Quest Functions
+function Module.claimAllQuests()
+    local questsClaimed = 0
+    
+    for questId, _ in pairs(Module.GameModules.QuestHelper.getConfig()) do
+        local isDone = Module.GameModules.Quest.isDoneProgress(questId)
+        local isClaimed = Module.GameModules.Quest.isClaimed(questId)
+        
+        if isDone and not isClaimed then
+            ReplicatedStorage.Remote.Event.Quest:WaitForChild("[C-S]TryClaimQuest"):FireServer(questId)
+            questsClaimed = questsClaimed + 1
+            task.wait(0.2)
+        end
+    end
+    
+    return questsClaimed
+end
+
+-- Character Functions
+function Module.killCharacter()
+    local char = player.Character
+    if char and char:FindFirstChild("Humanoid") then
+        char.Humanoid.Health = 0
+    end
+end
+
+-- Cleanup Function
+function Module.cleanup()
+    Module.removeRangeCircle()
+    Module.Data.autoAttackEnabled = false
+    Module.Data.walkSpeedEnabled = false
+    Module.Data.jumpPowerEnabled = false
+    Module.stopFly()
+    Module.stopNoclip()
+    Module.toggleDetection(false)
+end
+
+return Module
