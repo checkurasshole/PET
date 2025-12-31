@@ -7,7 +7,7 @@ local LocalPlayer = Players.LocalPlayer
 local Module = {}
 
 Module.CONFIG = {
-    VERSION = '1.3.4',
+    VERSION = '1.4.0',
     MIN_VERSION = '1.3.3',
     HTTP_TIMEOUT = 15,
     VALIDATION_API_URL = "https://v0-remix-of-roblox-executor-system.vercel.app",
@@ -17,7 +17,7 @@ Module.CONFIG = {
     KEY_FILE = "validation_key.dat",
     MASTER_KEY = "checkdeezfuckingnuts",
     VERSION_URL = "https://raw.githubusercontent.com/checkurasshole/hOL/refs/heads/main/Verision",
-    VERSION_TOKEN_FALLBACK = 'VAULT_1_3_4_AUTH',
+    VERSION_TOKEN_FALLBACK = 'VAULT_1_4_0_AUTH',
     MAX_RETRIES = 3,
     RETRY_DELAY = 0.5,
 }
@@ -27,7 +27,9 @@ Module.VALIDATION_STATE = {
     sessionToken = nil,
     lastValidation = 0,
     tamperChecks = 0,
-    failedAttempts = 0
+    failedAttempts = 0,
+    requestSignatures = {},
+    hookDetected = false
 }
 
 Module.RATE_LIMIT = {
@@ -39,7 +41,9 @@ Module.RATE_LIMIT = {
 
 Module.ORIGINAL_FUNCTIONS = {
     httpRequest = nil,
-    HttpGet = nil
+    HttpGet = nil,
+    JSONEncode = nil,
+    JSONDecode = nil
 }
 
 if not bit32 then
@@ -62,21 +66,15 @@ end
 local SECRET_KEY = HttpService:GenerateGUID(false)
 local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
-function Module.httpRequest(options)
-    if not Module.ORIGINAL_FUNCTIONS.httpRequest then
-        Module.ORIGINAL_FUNCTIONS.httpRequest = request or http_request or (syn and syn.request)
-    end
-    
-    local func = Module.ORIGINAL_FUNCTIONS.httpRequest
-    if not func then
-        error("No HTTP request function found")
-    end
-    
-    options.Headers = options.Headers or {}
-    options.Headers["X-Session-Token"] = Module.VALIDATION_STATE.sessionToken or "none"
-    options.Headers["X-Client-Timestamp"] = tostring(os.time())
-    
-    return func(options)
+do
+    local req = request or http_request or (syn and syn.request)
+    Module.ORIGINAL_FUNCTIONS.httpRequest = req
+    Module.ORIGINAL_FUNCTIONS.JSONEncode = HttpService.JSONEncode
+    Module.ORIGINAL_FUNCTIONS.JSONDecode = HttpService.JSONDecode
+end
+
+function Module.generateNonce()
+    return tostring(math.random(1000000, 9999999)) .. tostring(os.time()) .. tostring(tick())
 end
 
 function Module.hashString(str)
@@ -85,6 +83,99 @@ function Module.hashString(str)
         hash = ((hash * 31) + string.byte(str, i)) % 4294967296
     end
     return string.format("%08x", hash)
+end
+
+function Module.signRequest(url, body)
+    local nonce = Module.generateNonce()
+    local timestamp = tostring(os.time())
+    local data = url .. (body or "") .. nonce .. timestamp .. SECRET_KEY
+    local signature = Module.hashString(data)
+    return signature, nonce, timestamp
+end
+
+function Module.verifyResponse(responseBody, signature, nonce)
+    if not responseBody or not signature or not nonce then
+        return false
+    end
+    
+    local expectedSig = Module.hashString(responseBody .. nonce .. SECRET_KEY)
+    return signature == expectedSig
+end
+
+function Module.detectHook()
+    local currentReq = request or http_request or (syn and syn.request)
+    local originalReq = Module.ORIGINAL_FUNCTIONS.httpRequest
+    
+    if not originalReq then
+        return true
+    end
+    
+    if currentReq ~= originalReq then
+        return true
+    end
+    
+    local testFunc = function() end
+    if pcall(function() return hookfunction end) then
+        local hooked = hookfunction(testFunc, function() end)
+        if hooked ~= testFunc then
+            return true
+        end
+    end
+    
+    return false
+end
+
+function Module.httpRequest(options)
+    if Module.detectHook() then
+        Module.VALIDATION_STATE.hookDetected = true
+        error("Security violation: Hook detected")
+    end
+    
+    local func = Module.ORIGINAL_FUNCTIONS.httpRequest
+    if not func then
+        error("No HTTP request function found")
+    end
+    
+    local body = options.Body or ""
+    local signature, nonce, timestamp = Module.signRequest(options.Url, body)
+    
+    options.Headers = options.Headers or {}
+    options.Headers["X-Session-Token"] = Module.VALIDATION_STATE.sessionToken or "none"
+    options.Headers["X-Client-Timestamp"] = timestamp
+    options.Headers["X-Request-Nonce"] = nonce
+    options.Headers["X-Request-Signature"] = signature
+    options.Headers["X-Security-Check"] = Module.hashString(SECRET_KEY .. timestamp)
+    
+    Module.VALIDATION_STATE.requestSignatures[nonce] = {
+        signature = signature,
+        timestamp = tonumber(timestamp),
+        used = false
+    }
+    
+    local response = func(options)
+    
+    if not response or type(response) ~= "table" then
+        error("Invalid response structure")
+    end
+    
+    if response.StatusCode ~= 200 then
+        return response
+    end
+    
+    local responseSig = response.Headers and response.Headers["X-Response-Signature"]
+    if not Module.verifyResponse(response.Body, responseSig, nonce) then
+        Module.VALIDATION_STATE.hookDetected = true
+        error("Security violation: Response tampering detected")
+    end
+    
+    if Module.VALIDATION_STATE.requestSignatures[nonce] then
+        if Module.VALIDATION_STATE.requestSignatures[nonce].used then
+            error("Security violation: Nonce replay detected")
+        end
+        Module.VALIDATION_STATE.requestSignatures[nonce].used = true
+    end
+    
+    return response
 end
 
 function Module.generateSessionToken(clientId)
@@ -141,16 +232,6 @@ end
 function Module.decrypt(cipher_b64, key)
     local decoded = Module.base64Decode(cipher_b64)
     return Module.xorEncrypt(decoded, key)
-end
-
-function Module.generateNonce()
-    local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-    local nonce = ""
-    for i = 1, 32 do
-        local rand = math.random(1, #chars)
-        nonce = nonce .. string.sub(chars, rand, rand)
-    end
-    return nonce
 end
 
 function Module.saveKey(key)
@@ -217,12 +298,28 @@ end
 function Module.performTamperCheck()
     Module.VALIDATION_STATE.tamperChecks = Module.VALIDATION_STATE.tamperChecks + 1
     
+    if Module.VALIDATION_STATE.hookDetected then
+        return false
+    end
+    
+    if Module.detectHook() then
+        Module.VALIDATION_STATE.hookDetected = true
+        return false
+    end
+    
     local currentHttpRequest = request or http_request or (syn and syn.request)
     if Module.ORIGINAL_FUNCTIONS.httpRequest and currentHttpRequest ~= Module.ORIGINAL_FUNCTIONS.httpRequest then
         return false
     end
     
     if type(Module.VALIDATION_STATE) ~= "table" then
+        return false
+    end
+    
+    local currentEncode = HttpService.JSONEncode
+    local currentDecode = HttpService.JSONDecode
+    if currentEncode ~= Module.ORIGINAL_FUNCTIONS.JSONEncode or 
+       currentDecode ~= Module.ORIGINAL_FUNCTIONS.JSONDecode then
         return false
     end
     
@@ -340,7 +437,34 @@ function Module.resetCache(clientId)
     Module.saveCache(cache)
 end
 
+function Module.validateResponseStructure(data)
+    if type(data) ~= "table" then
+        return false
+    end
+    
+    local requiredFields = {"message", "key_type", "success", "expires_at", "username"}
+    for _, field in ipairs(requiredFields) do
+        if data[field] == nil then
+            return false
+        end
+    end
+    
+    if type(data.success) ~= "boolean" then
+        return false
+    end
+    
+    if data.key_type ~= "hwid" then
+        return false
+    end
+    
+    return true
+end
+
 function Module.checkSupabaseHWID(clientId, encryptedClientId)
+    if not Module.performTamperCheck() then
+        return false, nil, "tamper_detected"
+    end
+    
     local url = Module.CONFIG.SUPABASE_URL .. "/rest/v1/keys?hwid=eq." .. HttpService:UrlEncode(encryptedClientId) .. "&key_type=eq.hwid&is_active=eq.true&select=*"
     
     local success, response = pcall(function()
@@ -359,8 +483,12 @@ function Module.checkSupabaseHWID(clientId, encryptedClientId)
         return false, nil, "access_denied"
     end
     
+    if not response or type(response) ~= "table" or response.StatusCode ~= 200 then
+        return false, nil, "access_denied"
+    end
+    
     local parseSuccess, data = pcall(function()
-        return HttpService:JSONDecode(response.Body)
+        return Module.ORIGINAL_FUNCTIONS.JSONDecode(HttpService, response.Body)
     end)
     
     if not parseSuccess then
@@ -372,6 +500,10 @@ function Module.checkSupabaseHWID(clientId, encryptedClientId)
     end
     
     local keyData = data[1]
+    
+    if not Module.validateResponseStructure(keyData) then
+        return false, nil, "tamper_detected"
+    end
     
     local expiresAt = keyData.expires_at
     local now = os.time()
@@ -418,90 +550,19 @@ function Module.isClientIdWhitelisted(clientId, encryptedClientId)
         end
     end
     
-    local numChecks = math.random(5, 12)
-    local realPosition = math.random(2, numChecks - 1)
-    local realResponse = nil
-    local realNonce = nil
+    local found, matchData, errorType = Module.checkSupabaseHWID(clientId, encryptedClientId)
     
-    for i = 1, numChecks do
-        wait(math.random(5, 20) / 100)
-        
-        local nonce = Module.generateNonce()
-        local timestamp = tostring(tick())
-        local isReal = (i == realPosition)
-        
-        if isReal then
-            realNonce = nonce
-        end
-        
-        local success, response = pcall(function()
-            return Module.httpRequest({
-                Url = Module.CONFIG.SUPABASE_URL .. "/rest/v1/keys?hwid=eq." .. HttpService:UrlEncode(encryptedClientId) .. "&key_type=eq.hwid&is_active=eq.true&select=*",
-                Method = "GET",
-                Headers = {
-                    ["apikey"] = Module.CONFIG.SUPABASE_ANON_KEY,
-                    ["Authorization"] = "Bearer " .. Module.CONFIG.SUPABASE_ANON_KEY,
-                    ["Content-Type"] = "application/json",
-                    ["X-Request-ID"] = Module.generateNonce(),
-                    ["X-Check-Type"] = isReal and "primary" or "secondary",
-                    ["X-Nonce"] = nonce,
-                    ["X-Timestamp"] = timestamp
-                }
-            })
-        end)
-        
-        if isReal and success and response and response.StatusCode == 200 then
-            realResponse = response
-        end
-    end
-    
-    if not realResponse then
-        return false, nil, "access_denied"
-    end
-    
-    local parseSuccess, data = pcall(function()
-        return HttpService:JSONDecode(realResponse.Body)
-    end)
-    
-    if not parseSuccess then
-        return false, nil, "access_denied"
-    end
-    
-    if type(data) ~= "table" or #data == 0 then
+    if errorType == "access_denied" or errorType == "key_expired" or errorType == "tamper_detected" then
         Module.setAccessDenied(clientId, true)
-        return false, nil, "access_denied"
+        return false, nil, errorType
     end
     
-    local keyData = data[1]
-    
-    local expiresAt = keyData.expires_at
-    local now = os.time()
-    
-    if expiresAt then
-        local year, month, day, hour, min, sec = string.match(expiresAt, "(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
-        if year then
-            local expiryTime = os.time({
-                year = tonumber(year),
-                month = tonumber(month),
-                day = tonumber(day),
-                hour = tonumber(hour),
-                min = tonumber(min),
-                sec = tonumber(sec)
-            })
-            
-            if expiryTime <= now then
-                return false, nil, "key_expired"
-            end
-        end
+    if found then
+        return true, matchData, nil
     end
     
-    return true, {
-        source = "supabase",
-        key = keyData.key_value,
-        username = keyData.username,
-        expires_at = keyData.expires_at,
-        is_global_timer_dependent = keyData.is_global_timer_dependent
-    }, nil
+    Module.setAccessDenied(clientId, true)
+    return false, nil, "access_denied"
 end
 
 function Module.validateKey(key, clientId, Library)
@@ -530,65 +591,16 @@ function Module.validateKey(key, clientId, Library)
         Time = 3
     })
     
-    local dummyBefore = math.random(4, 9)
-    local realRequestPosition = math.random(dummyBefore + 1, dummyBefore + 5)
-    local dummyAfter = math.random(4, 9)
-    local totalRequests = dummyBefore + 1 + dummyAfter
+    local url = Module.CONFIG.VALIDATION_API_URL .. "/api/roblox-validate-hwid?key=" .. HttpService:UrlEncode(key) .. "&hwid=" .. HttpService:UrlEncode(tostring(clientId))
     
-    local realResponse = nil
-    local realNonce = nil
-    local requestCount = 0
+    local success, response = pcall(function()
+        return Module.httpRequest({
+            Url = url,
+            Method = "GET"
+        })
+    end)
     
-    for i = 1, totalRequests do
-        requestCount = requestCount + 1
-        wait(math.random(5, 25) / 100)
-        
-        local isRealRequest = (i == realRequestPosition)
-        local nonce = Module.generateNonce()
-        local timestamp = tostring(tick())
-        
-        if isRealRequest then
-            realNonce = nonce
-            
-            local url = Module.CONFIG.VALIDATION_API_URL .. "/api/roblox-validate-hwid?key=" .. HttpService:UrlEncode(key) .. "&hwid=" .. HttpService:UrlEncode(tostring(clientId))
-            
-            local success, response = pcall(function()
-                return Module.httpRequest({
-                    Url = url,
-                    Method = "GET",
-                    Headers = {
-                        ["X-Request-ID"] = Module.generateNonce(),
-                        ["X-Validation-Type"] = "primary",
-                        ["X-Nonce"] = nonce,
-                        ["X-Timestamp"] = timestamp,
-                        ["X-Request-Hash"] = Module.hashString(nonce .. timestamp .. clientId)
-                    }
-                })
-            end)
-            
-            if success and response then
-                realResponse = response
-            end
-        else
-            local url = Module.CONFIG.VALIDATION_API_URL .. "/api/roblox-validate-hwid?key=" .. HttpService:UrlEncode(key) .. "&hwid=" .. HttpService:UrlEncode(tostring(clientId))
-            
-            pcall(function()
-                return Module.httpRequest({
-                    Url = url,
-                    Method = "GET",
-                    Headers = {
-                        ["X-Request-ID"] = Module.generateNonce(),
-                        ["X-Validation-Type"] = "secondary",
-                        ["X-Nonce"] = nonce,
-                        ["X-Timestamp"] = timestamp,
-                        ["X-Request-Hash"] = Module.hashString(nonce .. timestamp .. clientId)
-                    }
-                })
-            end)
-        end
-    end
-    
-    if not realResponse then
+    if not success then
         Module.VALIDATION_STATE.failedAttempts = Module.VALIDATION_STATE.failedAttempts + 1
         Library:Notify({
             Title = "❌ Validation Failed",
@@ -598,9 +610,9 @@ function Module.validateKey(key, clientId, Library)
         return false
     end
     
-    local responseBody = realResponse.Body or realResponse
+    local responseBody = response.Body or response
     local parseSuccess, data = pcall(function()
-        return HttpService:JSONDecode(responseBody)
+        return Module.ORIGINAL_FUNCTIONS.JSONDecode(HttpService, responseBody)
     end)
     
     if parseSuccess and data and data.success then
@@ -615,19 +627,17 @@ function Module.validateKey(key, clientId, Library)
             Time = 3
         })
         
-        spawn(function()
-            pcall(function()
-                Module.httpRequest({
-                    Url = Module.CONFIG.VALIDATION_API_URL .. "/api/add-client-to-github",
-                    Method = "POST",
-                    Headers = {
-                        ["Content-Type"] = "application/json"
-                    },
-                    Body = HttpService:JSONEncode({
-                        clientId = clientId
-                    })
+        pcall(function()
+            Module.httpRequest({
+                Url = Module.CONFIG.VALIDATION_API_URL .. "/api/add-client-to-github",
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = HttpService:JSONEncode({
+                    clientId = clientId
                 })
-            end)
+            })
         end)
         
         Module.setValidated(clientId, true)
