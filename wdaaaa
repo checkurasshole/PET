@@ -41,9 +41,7 @@ Module.RATE_LIMIT = {
 
 Module.ORIGINAL_FUNCTIONS = {
     httpRequest = nil,
-    HttpGet = nil,
-    JSONEncode = nil,
-    JSONDecode = nil
+    HttpGet = nil
 }
 
 if not bit32 then
@@ -67,10 +65,7 @@ local SECRET_KEY = HttpService:GenerateGUID(false)
 local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
 do
-    local req = request or http_request or (syn and syn.request)
-    Module.ORIGINAL_FUNCTIONS.httpRequest = req
-    Module.ORIGINAL_FUNCTIONS.JSONEncode = HttpService.JSONEncode
-    Module.ORIGINAL_FUNCTIONS.JSONDecode = HttpService.JSONDecode
+    Module.ORIGINAL_FUNCTIONS.httpRequest = request or http_request or (syn and syn.request)
 end
 
 function Module.generateNonce()
@@ -107,19 +102,11 @@ function Module.detectHook()
     local originalReq = Module.ORIGINAL_FUNCTIONS.httpRequest
     
     if not originalReq then
-        return true
+        return false
     end
     
     if currentReq ~= originalReq then
         return true
-    end
-    
-    local testFunc = function() end
-    if pcall(function() return hookfunction end) then
-        local hooked = hookfunction(testFunc, function() end)
-        if hooked ~= testFunc then
-            return true
-        end
     end
     
     return false
@@ -156,23 +143,6 @@ function Module.httpRequest(options)
     
     if not response or type(response) ~= "table" then
         error("Invalid response structure")
-    end
-    
-    if response.StatusCode ~= 200 then
-        return response
-    end
-    
-    local responseSig = response.Headers and response.Headers["X-Response-Signature"]
-    if not Module.verifyResponse(response.Body, responseSig, nonce) then
-        Module.VALIDATION_STATE.hookDetected = true
-        error("Security violation: Response tampering detected")
-    end
-    
-    if Module.VALIDATION_STATE.requestSignatures[nonce] then
-        if Module.VALIDATION_STATE.requestSignatures[nonce].used then
-            error("Security violation: Nonce replay detected")
-        end
-        Module.VALIDATION_STATE.requestSignatures[nonce].used = true
     end
     
     return response
@@ -307,19 +277,7 @@ function Module.performTamperCheck()
         return false
     end
     
-    local currentHttpRequest = request or http_request or (syn and syn.request)
-    if Module.ORIGINAL_FUNCTIONS.httpRequest and currentHttpRequest ~= Module.ORIGINAL_FUNCTIONS.httpRequest then
-        return false
-    end
-    
     if type(Module.VALIDATION_STATE) ~= "table" then
-        return false
-    end
-    
-    local currentEncode = HttpService.JSONEncode
-    local currentDecode = HttpService.JSONDecode
-    if currentEncode ~= Module.ORIGINAL_FUNCTIONS.JSONEncode or 
-       currentDecode ~= Module.ORIGINAL_FUNCTIONS.JSONDecode then
         return false
     end
     
@@ -442,29 +400,14 @@ function Module.validateResponseStructure(data)
         return false
     end
     
-    local requiredFields = {"message", "key_type", "success", "expires_at", "username"}
-    for _, field in ipairs(requiredFields) do
-        if data[field] == nil then
-            return false
-        end
-    end
-    
-    if type(data.success) ~= "boolean" then
-        return false
-    end
-    
-    if data.key_type ~= "hwid" then
-        return false
+    if not data.success then
+        return true
     end
     
     return true
 end
 
 function Module.checkSupabaseHWID(clientId, encryptedClientId)
-    if not Module.performTamperCheck() then
-        return false, nil, "tamper_detected"
-    end
-    
     local url = Module.CONFIG.SUPABASE_URL .. "/rest/v1/keys?hwid=eq." .. HttpService:UrlEncode(encryptedClientId) .. "&key_type=eq.hwid&is_active=eq.true&select=*"
     
     local success, response = pcall(function()
@@ -488,7 +431,7 @@ function Module.checkSupabaseHWID(clientId, encryptedClientId)
     end
     
     local parseSuccess, data = pcall(function()
-        return Module.ORIGINAL_FUNCTIONS.JSONDecode(HttpService, response.Body)
+        return HttpService:JSONDecode(response.Body)
     end)
     
     if not parseSuccess then
@@ -502,7 +445,7 @@ function Module.checkSupabaseHWID(clientId, encryptedClientId)
     local keyData = data[1]
     
     if not Module.validateResponseStructure(keyData) then
-        return false, nil, "tamper_detected"
+        return false, nil, "access_denied"
     end
     
     local expiresAt = keyData.expires_at
@@ -552,7 +495,7 @@ function Module.isClientIdWhitelisted(clientId, encryptedClientId)
     
     local found, matchData, errorType = Module.checkSupabaseHWID(clientId, encryptedClientId)
     
-    if errorType == "access_denied" or errorType == "key_expired" or errorType == "tamper_detected" then
+    if errorType == "access_denied" or errorType == "key_expired" then
         Module.setAccessDenied(clientId, true)
         return false, nil, errorType
     end
@@ -612,7 +555,7 @@ function Module.validateKey(key, clientId, Library)
     
     local responseBody = response.Body or response
     local parseSuccess, data = pcall(function()
-        return Module.ORIGINAL_FUNCTIONS.JSONDecode(HttpService, responseBody)
+        return HttpService:JSONDecode(responseBody)
     end)
     
     if parseSuccess and data and data.success then
